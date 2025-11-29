@@ -13,7 +13,7 @@ Rogue Finder はローカルにインストール済みの Nmap を用いて軽�
 1. PyInstaller 版バイナリは単体で動作しますが、Nmap は別途インストールが必要です。
 2. Nmap を OS ごとにセットアップし、`nmap --version` が成功することを確認してください。
    - **Windows:** <https://nmap.org/download.html> からインストーラーを入手 → デフォルト設定で導入 → 新しいコマンドプロンプトで `nmap --version`。
-   - **macOS:** `brew install nmap` あるいは公式 dmg。
+   - **macOS (Apple Silicon 専用):** リリース版は arm64 (Apple Silicon) 用にビルドされています。Intel Mac では `python -m nmap_gui.main` でソースから実行するか、必要に応じて Rosetta を利用してください。`brew install nmap` または公式 dmg で Nmap を導入します。
    - **Linux:** ディストリビューションのパッケージマネージャー (例: `sudo apt install nmap`)。
 3. Rogue Finder の実行ファイルと本マニュアル (英語版/日本語版) を同じフォルダーに置いておくと参照しやすくなります。
 

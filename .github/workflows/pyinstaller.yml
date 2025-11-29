@@ -66,8 +66,8 @@ jobs:
           path: upload
 
   build-macos:
-    name: macOS
-    runs-on: macos-13
+    name: macOS (arm64)
+    runs-on: macos-latest
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (
