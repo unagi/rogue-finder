@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import subprocess
 import xml.etree.ElementTree as ET
@@ -9,7 +10,14 @@ from typing import List, Sequence, Set
 
 from multiprocessing.synchronize import Event as MpEvent
 
-from .models import HostScanResult, ScanMode
+from .error_codes import (
+    ERROR_NMAP_FAILED,
+    ERROR_NMAP_NOT_FOUND,
+    ERROR_NMAP_TIMEOUT,
+    ERROR_SCAN_ABORTED,
+    build_error,
+)
+from .models import ErrorRecord, HostScanResult, ScanMode
 from .rating import apply_rating
 
 LOGGER = logging.getLogger(__name__)
@@ -37,6 +45,14 @@ PORT_SCAN_LIST = [
     15672,
     50000,
 ]
+
+if os.name == "nt":
+    _WINDOWS_STARTUPINFO = subprocess.STARTUPINFO()
+    _WINDOWS_STARTUPINFO.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0)
+    _WINDOWS_CREATION_FLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+else:
+    _WINDOWS_STARTUPINFO = None
+    _WINDOWS_CREATION_FLAGS = 0
 
 
 class NmapExecutionError(RuntimeError):
@@ -66,6 +82,8 @@ def run_nmap(args: Sequence[str], timeout: int = DEFAULT_TIMEOUT) -> str:
         text=True,
         capture_output=True,
         timeout=timeout,
+        startupinfo=_WINDOWS_STARTUPINFO,
+        creationflags=_WINDOWS_CREATION_FLAGS,
     )
     if proc.returncode not in (0, 1):
         raise NmapExecutionError(proc.stderr.strip() or "nmap execution failed")
@@ -106,18 +124,18 @@ def parse_os_guess(xml_text: str) -> tuple[str, int | None]:
 
 def run_full_scan(target: str, scan_modes: Set[ScanMode], cancel_event: MpEvent | None = None) -> HostScanResult:
     result = HostScanResult(target=target)
-    errors: List[str] = []
+    errors: List[ErrorRecord] = []
 
     try:
         if cancel_event and cancel_event.is_set():
-            errors.append("Scan aborted")
+            errors.append(build_error(ERROR_SCAN_ABORTED))
             result.errors = errors
             return apply_rating(result)
         if ScanMode.ICMP in scan_modes:
             xml_text = run_nmap(["nmap", "-sn", "-PE", target])
             result.is_alive = parse_icmp_alive(xml_text)
         if cancel_event and cancel_event.is_set():
-            errors.append("Scan aborted")
+            errors.append(build_error(ERROR_SCAN_ABORTED))
             result.errors = errors
             return apply_rating(result)
 
@@ -127,7 +145,7 @@ def run_full_scan(target: str, scan_modes: Set[ScanMode], cancel_event: MpEvent 
             result.open_ports = parse_open_ports(xml_text)
             result.high_ports = [p for p in result.open_ports if p >= 50000]
         if cancel_event and cancel_event.is_set():
-            errors.append("Scan aborted")
+            errors.append(build_error(ERROR_SCAN_ABORTED))
             result.errors = errors
             return apply_rating(result)
 
@@ -137,14 +155,17 @@ def run_full_scan(target: str, scan_modes: Set[ScanMode], cancel_event: MpEvent 
             result.os_guess = os_guess
             result.os_accuracy = accuracy
         if cancel_event and cancel_event.is_set():
-            errors.append("Scan aborted")
+            errors.append(build_error(ERROR_SCAN_ABORTED))
             result.errors = errors
             return apply_rating(result)
 
-    except NmapNotInstalledError as exc:
-        errors.append(str(exc))
-    except (subprocess.TimeoutExpired, NmapExecutionError) as exc:
-        errors.append(str(exc))
+    except NmapNotInstalledError:
+        errors.append(build_error(ERROR_NMAP_NOT_FOUND))
+    except subprocess.TimeoutExpired as exc:
+        timeout_value = exc.timeout if getattr(exc, "timeout", None) else DEFAULT_TIMEOUT
+        errors.append(build_error(ERROR_NMAP_TIMEOUT, timeout=timeout_value))
+    except NmapExecutionError as exc:
+        errors.append(build_error(ERROR_NMAP_FAILED, detail=str(exc)))
     finally:
         result.errors = errors
 
