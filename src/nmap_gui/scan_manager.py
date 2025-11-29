@@ -3,12 +3,13 @@ from __future__ import annotations
 
 import multiprocessing as mp
 import os
-from concurrent.futures import (
-    ProcessPoolExecutor,
-    ThreadPoolExecutor,
-    BrokenProcessPool,
-    as_completed,
-)
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+
+try:  # Python embedded in PyInstaller on Windows may lack BrokenProcessPool
+    from concurrent.futures import BrokenProcessPool
+except ImportError:  # pragma: no cover - fallback for runtimes missing the class
+    class BrokenProcessPool(RuntimeError):  # type: ignore[override]
+        """Compatibility placeholder so exception handling still works."""
 from multiprocessing.connection import Connection
 from typing import Optional
 
