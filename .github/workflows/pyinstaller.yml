@@ -52,6 +52,13 @@ jobs:
           mkdir -p upload
           cp -R dist upload/
 
+      - name: Include manuals
+        shell: bash
+        run: |
+          mkdir -p upload/manuals
+          cp docs/rogue_finder_manual_en.md upload/manuals/
+          cp docs/rogue_finder_manual_ja.md upload/manuals/
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -97,6 +104,13 @@ jobs:
         run: |
           mkdir -p upload
           cp -R dist upload/
+
+      - name: Include manuals
+        shell: bash
+        run: |
+          mkdir -p upload/manuals
+          cp docs/rogue_finder_manual_en.md upload/manuals/
+          cp docs/rogue_finder_manual_ja.md upload/manuals/
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

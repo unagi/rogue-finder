@@ -15,6 +15,11 @@ from typing import Optional
 
 from PySide6.QtCore import QObject, QThread, Signal, Slot
 
+from .error_codes import (
+    ERROR_SCAN_CRASHED,
+    ERROR_WORKER_POOL_FAILED,
+    build_error,
+)
 from .models import ScanConfig
 from .nmap_runner import run_full_scan
 from .cancel_token import PipeCancelToken, create_pipe_cancel_token
@@ -23,7 +28,7 @@ from .cancel_token import PipeCancelToken, create_pipe_cancel_token
 class ScanWorker(QObject):
     progress = Signal(int, int)
     result_ready = Signal(object)
-    error = Signal(str)
+    error = Signal(object)
     finished = Signal()
 
     def __init__(self, config: ScanConfig):
@@ -69,11 +74,14 @@ class ScanWorker(QObject):
                         self.result_ready.emit(result)
                     except BrokenProcessPool as exc:
                         self.error.emit(
-                            "Scan failed: worker processes terminated unexpectedly; retrying with fewer targets or restarting may help"
+                            build_error(
+                                ERROR_WORKER_POOL_FAILED,
+                                detail=str(exc),
+                            )
                         )
                         break
                     except Exception as exc:  # noqa: BLE001
-                        self.error.emit(f"Scan failed: {exc}")
+                        self.error.emit(build_error(ERROR_SCAN_CRASHED, detail=str(exc)))
                     completed += 1
                     self.progress.emit(completed, total)
                     if self._cancel_token and self._cancel_token.is_set():
@@ -106,7 +114,7 @@ class ScanWorker(QObject):
 class ScanManager(QObject):
     progress = Signal(int, int)
     result_ready = Signal(object)
-    error = Signal(str)
+    error = Signal(object)
     started = Signal(int)
     finished = Signal()
 

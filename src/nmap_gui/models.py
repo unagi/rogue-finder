@@ -21,6 +21,23 @@ class ScanConfig:
     targets: Sequence[str]
     scan_modes: Set[ScanMode]
 
+@dataclass
+class ErrorRecord:
+    """Structured error payload with translation keys and remediation hints."""
+
+    code: str
+    message_key: str
+    action_key: str
+    context: Dict[str, str] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, object]:
+        return {
+            "code": self.code,
+            "message_key": self.message_key,
+            "action_key": self.action_key,
+            "context": dict(self.context),
+        }
+
 
 @dataclass
 class HostScanResult:
@@ -35,12 +52,13 @@ class HostScanResult:
     score_breakdown: Dict[str, int] = field(default_factory=dict)
     score: int = 0
     priority: str = "Unknown"
-    errors: List[str] = field(default_factory=list)
+    errors: List[ErrorRecord] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, object]:
         """Return a JSON/export friendly representation."""
 
         data = asdict(self)
+        data["errors"] = [error.to_dict() for error in self.errors]
         return data
 
 

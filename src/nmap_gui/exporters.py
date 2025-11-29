@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Iterable
 
+from .i18n import detect_language, format_error_list
 from .models import HostScanResult
 
 EXPORT_FIELDS = [
@@ -22,13 +23,20 @@ EXPORT_FIELDS = [
 ]
 
 
-def export_csv(path: str | Path, results: Iterable[HostScanResult]) -> Path:
+def export_csv(
+    path: str | Path,
+    results: Iterable[HostScanResult],
+    *,
+    language: str | None = None,
+) -> Path:
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
+    lang = language or detect_language()
     with output.open("w", newline="", encoding="utf-8") as file:
         writer = csv.DictWriter(file, fieldnames=EXPORT_FIELDS)
         writer.writeheader()
         for item in results:
+            formatted_errors = " | ".join(format_error_list(item.errors, lang))
             row = {
                 "target": item.target,
                 "is_alive": item.is_alive,
@@ -39,15 +47,25 @@ def export_csv(path: str | Path, results: Iterable[HostScanResult]) -> Path:
                 "score": item.score,
                 "priority": item.priority,
                 "score_breakdown": json.dumps(item.score_breakdown, ensure_ascii=False),
-                "errors": " | ".join(item.errors),
+                "errors": formatted_errors,
             }
             writer.writerow(row)
     return output
 
 
-def export_json(path: str | Path, results: Iterable[HostScanResult]) -> Path:
+def export_json(
+    path: str | Path,
+    results: Iterable[HostScanResult],
+    *,
+    language: str | None = None,
+) -> Path:
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
-    serialized = [item.to_dict() for item in results]
+    lang = language or detect_language()
+    serialized = []
+    for item in results:
+        payload = item.to_dict()
+        payload["errors_text"] = format_error_list(item.errors, lang)
+        serialized.append(payload)
     output.write_text(json.dumps(serialized, indent=2, ensure_ascii=False), encoding="utf-8")
     return output
