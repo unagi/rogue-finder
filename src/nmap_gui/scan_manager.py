@@ -4,11 +4,23 @@ from __future__ import annotations
 import multiprocessing as mp
 import os
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from multiprocessing.context import BaseContext
+from multiprocessing.managers import SyncManager
+from typing import Any
 
 from PySide6.QtCore import QObject, QThread, Signal, Slot
 
 from .models import ScanConfig
 from .nmap_runner import run_full_scan
+
+
+def create_cancel_event(mp_context: BaseContext | None = None) -> tuple[SyncManager, Any]:
+    """Return a manager and an Event that is safe to share via spawn workers."""
+
+    context = mp_context or mp.get_context("spawn")
+    manager = context.Manager()
+    event = manager.Event()
+    return manager, event
 
 
 class ScanWorker(QObject):
@@ -21,10 +33,9 @@ class ScanWorker(QObject):
         super().__init__()
         self._config = config
         self._mp_context = mp.get_context("spawn")
-        # Manager-based Event can be shared with spawn-based executors without
-        # triggering "Condition objects" errors on Windows.
-        self._manager = self._mp_context.Manager()
-        self._cancel_event = self._manager.Event()
+        self._manager: SyncManager | None = None
+        self._cancel_event: Any = None
+        self._manager, self._cancel_event = create_cancel_event(self._mp_context)
 
     @Slot()
     def start(self) -> None:
@@ -32,7 +43,7 @@ class ScanWorker(QObject):
         total = len(targets)
         if not targets:
             self.finished.emit()
-            self._manager.shutdown()
+            self._shutdown_manager()
             return
         ctx = self._mp_context
         max_workers = min(total, os.cpu_count() or 1)
@@ -57,10 +68,17 @@ class ScanWorker(QObject):
                         break
         finally:
             self.finished.emit()
-            self._manager.shutdown()
+            self._shutdown_manager()
 
     def request_stop(self) -> None:
-        self._cancel_event.set()
+        if self._cancel_event is not None:
+            self._cancel_event.set()
+
+    def _shutdown_manager(self) -> None:
+        if self._manager is not None:
+            self._manager.shutdown()
+            self._manager = None
+        self._cancel_event = None
 
 
 class ScanManager(QObject):
