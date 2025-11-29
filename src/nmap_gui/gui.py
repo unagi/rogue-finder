@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import List, Set
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -50,6 +51,8 @@ class MainWindow(QMainWindow):
         self.resize(1000, 700)
         self._results: List[HostScanResult] = []
         self._scan_manager = ScanManager()
+        self._sort_column: int | None = None
+        self._sort_order = Qt.AscendingOrder
         self._setup_scan_manager()
         self._build_ui()
 
@@ -72,11 +75,15 @@ class MainWindow(QMainWindow):
     def _create_settings_panel(self) -> QWidget:
         group = QGroupBox(self._t("scan_settings"))
         grid = QGridLayout(group)
+        grid.setContentsMargins(12, 12, 12, 8)
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(6)
 
         grid.addWidget(QLabel(self._t("targets_label")), 0, 0)
         self.target_input = QPlainTextEdit()
         self.target_input.setPlaceholderText(self._t("targets_placeholder"))
-        self.target_input.setFixedHeight(80)
+        self.target_input.setFixedHeight(64)
+        self.target_input.document().setDocumentMargin(4)
         grid.addWidget(self.target_input, 1, 0, 1, 4)
 
         self.icmp_checkbox = QCheckBox(self._t("label_icmp"))
@@ -118,7 +125,13 @@ class MainWindow(QMainWindow):
                 self._t("table_errors"),
             ]
         )
-        self.table.horizontalHeader().setStretchLastSection(True)
+        header = self.table.horizontalHeader()
+        header.setStretchLastSection(True)
+        header.setSortIndicatorShown(False)
+        header.setSectionsClickable(True)
+        header.sectionClicked.connect(self._handle_sort_request)
+        self.table.setSortingEnabled(False)
+        self.table.setWordWrap(False)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         return self.table
@@ -185,23 +198,39 @@ class MainWindow(QMainWindow):
 
     def _on_result(self, result: HostScanResult) -> None:
         self._results.append(result)
+        sorting_enabled = self.table.isSortingEnabled()
+        if sorting_enabled:
+            self.table.setSortingEnabled(False)
         row = self.table.rowCount()
         self.table.insertRow(row)
-        self.table.setItem(row, 0, QTableWidgetItem(result.target))
+        self.table.setItem(row, 0, self._make_item(result.target, Qt.AlignLeft))
         alive_text = self._t("alive_yes") if result.is_alive else self._t("alive_no")
-        self.table.setItem(row, 1, QTableWidgetItem(alive_text))
-        self.table.setItem(row, 2, QTableWidgetItem(", ".join(str(p) for p in result.open_ports)))
+        self.table.setItem(row, 1, self._make_item(alive_text, Qt.AlignCenter))
+        ports_text = ", ".join(str(p) for p in result.open_ports)
+        self.table.setItem(row, 2, self._make_item(ports_text, Qt.AlignLeft))
         os_text = result.os_guess
         if result.os_accuracy is not None:
             os_text = f"{os_text} ({result.os_accuracy}%)"
-        self.table.setItem(row, 3, QTableWidgetItem(os_text))
-        self.table.setItem(row, 4, QTableWidgetItem(str(result.score)))
+        self.table.setItem(row, 3, self._make_item(os_text, Qt.AlignLeft))
+        self.table.setItem(row, 4, self._make_item(str(result.score), Qt.AlignRight))
         display_priority = self._priority_labels.get(result.priority, result.priority)
-        priority_item = QTableWidgetItem(display_priority)
+        priority_item = self._make_item(display_priority, Qt.AlignCenter)
         self.table.setItem(row, 5, priority_item)
         error_text = "\n".join(format_error_list(result.errors, self._language))
-        self.table.setItem(row, 6, QTableWidgetItem(error_text))
+        self.table.setItem(row, 6, self._make_item(error_text, Qt.AlignLeft))
         self._apply_row_style(row, result.priority)
+        if sorting_enabled:
+            self.table.setSortingEnabled(True)
+            if self._sort_column is not None:
+                self.table.sortItems(self._sort_column, self._sort_order)
+
+    def _make_item(
+        self, text: str, alignment: Qt.AlignmentFlag | None = None
+    ) -> QTableWidgetItem:
+        item = QTableWidgetItem(text)
+        if alignment is not None:
+            item.setTextAlignment(int(alignment | Qt.AlignVCenter))
+        return item
 
     def _apply_row_style(self, row: int, priority: str) -> None:
         color = PRIORITY_COLORS.get(priority)
@@ -211,6 +240,24 @@ class MainWindow(QMainWindow):
             item = self.table.item(row, col)
             if item:
                 item.setBackground(color)
+
+    def _handle_sort_request(self, column: int) -> None:
+        if self._sort_column == column:
+            self._sort_order = (
+                Qt.DescendingOrder
+                if self._sort_order == Qt.AscendingOrder
+                else Qt.AscendingOrder
+            )
+        else:
+            self._sort_column = column
+            self._sort_order = Qt.AscendingOrder
+
+        header = self.table.horizontalHeader()
+        header.setSortIndicatorShown(True)
+        header.setSortIndicator(column, self._sort_order)
+        if not self.table.isSortingEnabled():
+            self.table.setSortingEnabled(True)
+        self.table.sortItems(column, self._sort_order)
 
     def _on_error(self, payload) -> None:
         if isinstance(payload, ErrorRecord):
