@@ -23,7 +23,8 @@ from PySide6.QtWidgets import (
 )
 
 from .exporters import export_csv, export_json
-from .models import HostScanResult, ScanConfig, ScanMode, sanitize_targets
+from .i18n import detect_language, format_error_list, format_error_record, translate
+from .models import ErrorRecord, HostScanResult, ScanConfig, ScanMode, sanitize_targets
 from .scan_manager import ScanManager
 
 
@@ -39,7 +40,13 @@ class MainWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Nmap Discovery & Rating")
+        self._language = detect_language()
+        self._priority_labels = {
+            "High": translate("priority_high", self._language),
+            "Medium": translate("priority_medium", self._language),
+            "Low": translate("priority_low", self._language),
+        }
+        self.setWindowTitle(self._t("window_title"))
         self.resize(1000, 700)
         self._results: List[HostScanResult] = []
         self._scan_manager = ScanManager()
@@ -60,31 +67,31 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._create_table())
         layout.addLayout(self._create_export_bar())
         self.setCentralWidget(central)
-        self.statusBar().showMessage("Ready")
+        self.statusBar().showMessage(self._t("ready"))
 
     def _create_settings_panel(self) -> QWidget:
-        group = QGroupBox("Scan Settings")
+        group = QGroupBox(self._t("scan_settings"))
         grid = QGridLayout(group)
 
-        grid.addWidget(QLabel("Targets (IP / CIDR / hostname)"), 0, 0)
+        grid.addWidget(QLabel(self._t("targets_label")), 0, 0)
         self.target_input = QPlainTextEdit()
-        self.target_input.setPlaceholderText("192.168.0.0/24\n10.0.0.5\nserver.local")
+        self.target_input.setPlaceholderText(self._t("targets_placeholder"))
         self.target_input.setFixedHeight(80)
         grid.addWidget(self.target_input, 1, 0, 1, 4)
 
-        self.icmp_checkbox = QCheckBox("ICMP")
+        self.icmp_checkbox = QCheckBox(self._t("label_icmp"))
         self.icmp_checkbox.setChecked(True)
-        self.port_checkbox = QCheckBox("Ports")
+        self.port_checkbox = QCheckBox(self._t("label_ports"))
         self.port_checkbox.setChecked(True)
-        self.os_checkbox = QCheckBox("OS")
+        self.os_checkbox = QCheckBox(self._t("label_os"))
         self.os_checkbox.setChecked(True)
 
         grid.addWidget(self.icmp_checkbox, 2, 0)
         grid.addWidget(self.port_checkbox, 2, 1)
         grid.addWidget(self.os_checkbox, 2, 2)
 
-        self.start_button = QPushButton("Start")
-        self.stop_button = QPushButton("Stop")
+        self.start_button = QPushButton(self._t("start"))
+        self.stop_button = QPushButton(self._t("stop"))
         self.stop_button.setEnabled(False)
         self.progress_bar = QProgressBar()
         self.progress_bar.setValue(0)
@@ -101,7 +108,15 @@ class MainWindow(QMainWindow):
     def _create_table(self) -> QWidget:
         self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels(
-            ["Target", "Alive", "Ports", "OS", "Score", "Priority", "Errors"]
+            [
+                self._t("table_target"),
+                self._t("table_alive"),
+                self._t("table_ports"),
+                self._t("table_os"),
+                self._t("table_score"),
+                self._t("table_priority"),
+                self._t("table_errors"),
+            ]
         )
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -111,8 +126,8 @@ class MainWindow(QMainWindow):
     def _create_export_bar(self) -> QHBoxLayout:
         bar = QHBoxLayout()
         bar.addStretch()
-        export_csv_btn = QPushButton("Export CSV")
-        export_json_btn = QPushButton("Export JSON")
+        export_csv_btn = QPushButton(self._t("export_csv"))
+        export_json_btn = QPushButton(self._t("export_json"))
         export_csv_btn.clicked.connect(self._export_csv)
         export_json_btn.clicked.connect(self._export_json)
         bar.addWidget(export_csv_btn)
@@ -132,11 +147,19 @@ class MainWindow(QMainWindow):
     def _on_start_clicked(self) -> None:
         targets = sanitize_targets(self.target_input.toPlainText())
         if not targets:
-            QMessageBox.warning(self, "Missing targets", "Please enter at least one target")
+            QMessageBox.warning(
+                self,
+                self._t("missing_targets_title"),
+                self._t("missing_targets_body"),
+            )
             return
         modes = self._collect_scan_modes()
         if not modes:
-            QMessageBox.warning(self, "Missing scan modes", "Select at least one scan mode")
+            QMessageBox.warning(
+                self,
+                self._t("missing_modes_title"),
+                self._t("missing_modes_body"),
+            )
             return
         self._results.clear()
         self.table.setRowCount(0)
@@ -144,13 +167,13 @@ class MainWindow(QMainWindow):
         self._scan_manager.start(config)
         self.start_button.setEnabled(False)
         self.stop_button.setEnabled(True)
-        self.statusBar().showMessage("Scanning...")
+        self.statusBar().showMessage(self._t("scanning"))
 
     def _on_stop_clicked(self) -> None:
         self._scan_manager.stop()
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
-        self.statusBar().showMessage("Scan stopped")
+        self.statusBar().showMessage(self._t("scan_stopped"))
 
     def _on_scan_started(self, total: int) -> None:
         self.progress_bar.setMaximum(max(total, 1))
@@ -165,16 +188,19 @@ class MainWindow(QMainWindow):
         row = self.table.rowCount()
         self.table.insertRow(row)
         self.table.setItem(row, 0, QTableWidgetItem(result.target))
-        self.table.setItem(row, 1, QTableWidgetItem("Yes" if result.is_alive else "No"))
+        alive_text = self._t("alive_yes") if result.is_alive else self._t("alive_no")
+        self.table.setItem(row, 1, QTableWidgetItem(alive_text))
         self.table.setItem(row, 2, QTableWidgetItem(", ".join(str(p) for p in result.open_ports)))
         os_text = result.os_guess
         if result.os_accuracy is not None:
             os_text = f"{os_text} ({result.os_accuracy}%)"
         self.table.setItem(row, 3, QTableWidgetItem(os_text))
         self.table.setItem(row, 4, QTableWidgetItem(str(result.score)))
-        priority_item = QTableWidgetItem(result.priority)
+        display_priority = self._priority_labels.get(result.priority, result.priority)
+        priority_item = QTableWidgetItem(display_priority)
         self.table.setItem(row, 5, priority_item)
-        self.table.setItem(row, 6, QTableWidgetItem("; ".join(result.errors)))
+        error_text = "\n".join(format_error_list(result.errors, self._language))
+        self.table.setItem(row, 6, QTableWidgetItem(error_text))
         self._apply_row_style(row, result.priority)
 
     def _apply_row_style(self, row: int, priority: str) -> None:
@@ -186,14 +212,21 @@ class MainWindow(QMainWindow):
             if item:
                 item.setBackground(color)
 
-    def _on_error(self, message: str) -> None:
-        QMessageBox.critical(self, "Scan error", message)
+    def _on_error(self, payload) -> None:
+        if isinstance(payload, ErrorRecord):
+            message = format_error_record(payload, self._language)
+        else:
+            message = str(payload)
+        QMessageBox.critical(self, self._t("scan_error_title"), message)
         self.statusBar().showMessage(message)
 
     def _on_finished(self) -> None:
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
-        self.statusBar().showMessage("Scan finished")
+        self.statusBar().showMessage(self._t("scan_finished"))
+
+    def _t(self, key: str) -> str:
+        return translate(key, self._language)
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         self._scan_manager.stop()
@@ -201,30 +234,38 @@ class MainWindow(QMainWindow):
 
     def _export_csv(self) -> None:
         if not self._results:
-            QMessageBox.information(self, "No results", "Scan results are empty")
+            QMessageBox.information(
+                self,
+                self._t("no_results_title"),
+                self._t("no_results_body"),
+            )
             return
         path, _ = QFileDialog.getSaveFileName(
             self,
-            "Export CSV",
+            self._t("export_csv_dialog"),
             "scan_results.csv",
-            "CSV Files (*.csv)",
+            self._t("export_csv_filter"),
         )
         if not path:
             return
-        export_csv(path, self._results)
-        self.statusBar().showMessage(f"CSV exported: {path}")
+        export_csv(path, self._results, language=self._language)
+        self.statusBar().showMessage(self._t("export_csv_done").format(path=path))
 
     def _export_json(self) -> None:
         if not self._results:
-            QMessageBox.information(self, "No results", "Scan results are empty")
+            QMessageBox.information(
+                self,
+                self._t("no_results_title"),
+                self._t("no_results_body"),
+            )
             return
         path, _ = QFileDialog.getSaveFileName(
             self,
-            "Export JSON",
+            self._t("export_json_dialog"),
             "scan_results.json",
-            "JSON Files (*.json)",
+            self._t("export_json_filter"),
         )
         if not path:
             return
-        export_json(path, self._results)
-        self.statusBar().showMessage(f"JSON exported: {path}")
+        export_json(path, self._results, language=self._language)
+        self.statusBar().showMessage(self._t("export_json_done").format(path=path))
