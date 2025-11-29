@@ -4,9 +4,8 @@ from __future__ import annotations
 import multiprocessing as mp
 import os
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from multiprocessing.context import BaseContext
-from multiprocessing.managers import SyncManager
-from typing import Any
+from multiprocessing.connection import Connection
+from typing import Optional
 
 from PySide6.QtCore import QObject, QThread, Signal, Slot
 
@@ -14,13 +13,15 @@ from .models import ScanConfig
 from .nmap_runner import run_full_scan
 
 
-def create_cancel_event(mp_context: BaseContext | None = None) -> tuple[SyncManager, Any]:
-    """Return a manager and an Event that is safe to share via spawn workers."""
+class PipeCancelToken:
+    """Lightweight cancellation primitive backed by a one-way Pipe."""
 
-    context = mp_context or mp.get_context("spawn")
-    manager = context.Manager()
-    event = manager.Event()
-    return manager, event
+    def __init__(self, connection: Connection):
+        self._connection = connection
+
+    def is_set(self) -> bool:
+        return self._connection.poll()
+
 
 
 class ScanWorker(QObject):
@@ -33,9 +34,10 @@ class ScanWorker(QObject):
         super().__init__()
         self._config = config
         self._mp_context = mp.get_context("spawn")
-        self._manager: SyncManager | None = None
-        self._cancel_event: Any = None
-        self._manager, self._cancel_event = create_cancel_event(self._mp_context)
+        self._cancel_tx: Optional[Connection] = None
+        self._cancel_rx: Optional[Connection] = None
+        self._cancel_token: Optional[PipeCancelToken] = None
+        self._init_cancel_token()
 
     @Slot()
     def start(self) -> None:
@@ -43,14 +45,19 @@ class ScanWorker(QObject):
         total = len(targets)
         if not targets:
             self.finished.emit()
-            self._shutdown_manager()
+            self._close_cancel_token()
             return
         ctx = self._mp_context
         max_workers = min(total, os.cpu_count() or 1)
         try:
             with ProcessPoolExecutor(max_workers=max_workers, mp_context=ctx) as executor:
                 futures = {
-                    executor.submit(run_full_scan, target, self._config.scan_modes, self._cancel_event): target
+                    executor.submit(
+                        run_full_scan,
+                        target,
+                        self._config.scan_modes,
+                        self._cancel_token,
+                    ): target
                     for target in targets
                 }
                 completed = 0
@@ -68,17 +75,29 @@ class ScanWorker(QObject):
                         break
         finally:
             self.finished.emit()
-            self._shutdown_manager()
+            self._close_cancel_token()
 
     def request_stop(self) -> None:
-        if self._cancel_event is not None:
-            self._cancel_event.set()
+        if self._cancel_tx is not None:
+            try:
+                self._cancel_tx.send(True)
+            except (OSError, BrokenPipeError):
+                pass
 
-    def _shutdown_manager(self) -> None:
-        if self._manager is not None:
-            self._manager.shutdown()
-            self._manager = None
-        self._cancel_event = None
+    def _init_cancel_token(self) -> None:
+        rx, tx = self._mp_context.Pipe(duplex=False)
+        self._cancel_tx = tx
+        self._cancel_rx = rx
+        self._cancel_token = PipeCancelToken(rx)
+
+    def _close_cancel_token(self) -> None:
+        if self._cancel_tx is not None:
+            self._cancel_tx.close()
+        if self._cancel_rx is not None:
+            self._cancel_rx.close()
+        self._cancel_tx = None
+        self._cancel_rx = None
+        self._cancel_token = None
 
 
 class ScanManager(QObject):
