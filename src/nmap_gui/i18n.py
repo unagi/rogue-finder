@@ -65,6 +65,12 @@ _TRANSLATIONS: Dict[str, Translations] = {
         "error.worker_pool_failed.action": "Retry with fewer targets or restart the application.",
         "error.scan_crashed.message": "Scan execution crashed: {detail}.",
         "error.scan_crashed.action": "Review the log/targets, then run the scan again.",
+        "privileged_os_required_title": "Administrator privileges required",
+        "privileged_os_required_body": (
+            "OS fingerprinting requires elevated privileges on this platform.\n"
+            "Close the app and re-launch it from Terminal with:\n{command}\n\n"
+            "Or uncheck the OS scan mode to continue without OS detection."
+        ),
     },
     "ja": {
         "error_action_label": "対応",
@@ -120,6 +126,12 @@ _TRANSLATIONS: Dict[str, Translations] = {
         "error.worker_pool_failed.action": "ターゲットを減らして再試行するか、アプリを再起動してください。",
         "error.scan_crashed.message": "スキャン実行で障害が発生しました: {detail}。",
         "error.scan_crashed.action": "ログとターゲットを確認し、再度スキャンしてください。",
+        "privileged_os_required_title": "管理者権限が必要です",
+        "privileged_os_required_body": (
+            "この環境で OS 指紋検出を行うには管理者権限が必要です。\n"
+            "アプリを終了し、ターミナルから次のコマンドで再起動してください:\n{command}\n\n"
+            "OS 判定を行わない場合は、OS モードのチェックを外して再実行してください。"
+        ),
     },
 }
 

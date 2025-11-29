@@ -1,6 +1,10 @@
 """PySide6 GUI for the Nmap discovery & rating application."""
 from __future__ import annotations
 
+import os
+import shlex
+import sys
+from pathlib import Path
 from typing import List, Set
 
 from PySide6.QtCore import Qt
@@ -174,6 +178,9 @@ class MainWindow(QMainWindow):
                 self._t("missing_modes_body"),
             )
             return
+        if not self._has_required_privileges(modes):
+            self._show_privileged_hint()
+            return
         self._results.clear()
         self.table.setRowCount(0)
         config = ScanConfig(targets=targets, scan_modes=modes)
@@ -316,3 +323,32 @@ class MainWindow(QMainWindow):
             return
         export_json(path, self._results, language=self._language)
         self.statusBar().showMessage(self._t("export_json_done").format(path=path))
+
+    def _has_required_privileges(self, modes: Set[ScanMode]) -> bool:
+        """Return True when OS scans are either disabled or elevated privileges exist."""
+        if ScanMode.OS not in modes:
+            return True
+        if os.name == "nt":
+            return True
+        geteuid = getattr(os, "geteuid", None)
+        if not callable(geteuid):
+            return True
+        return geteuid() == 0
+
+    def _show_privileged_hint(self) -> None:
+        """Inform the user that sudo is required to run OS fingerprinting."""
+        command = self._privileged_launch_command()
+        QMessageBox.information(
+            self,
+            self._t("privileged_os_required_title"),
+            self._t("privileged_os_required_body").format(command=command),
+        )
+
+    def _privileged_launch_command(self) -> str:
+        """Suggest a sudo command that re-launches the current binary."""
+        if getattr(sys, "frozen", False):
+            executable = Path(sys.executable).resolve()
+            return f"sudo {shlex.quote(str(executable))}"
+        python = sys.executable or "python3"
+        python_path = shlex.quote(str(Path(python).resolve()))
+        return f"sudo {python_path} -m nmap_gui.main --debug"
