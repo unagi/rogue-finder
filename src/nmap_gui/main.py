@@ -8,7 +8,12 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
-from .gui import MainWindow
+try:
+    from .gui import MainWindow  # type: ignore[attr-defined]
+except ImportError:  # pragma: no cover - fallback for direct script execution
+    # When the module is executed as ``python main.py`` there is no package
+    # context, so fall back to an absolute import to support that workflow.
+    from nmap_gui.gui import MainWindow
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
