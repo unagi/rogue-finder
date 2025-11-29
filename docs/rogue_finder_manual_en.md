@@ -13,7 +13,7 @@ Rogue Finder is a cross-platform desktop utility that orchestrates lightweight N
 1. Install Python or simply use the provided PyInstaller binary; no interpreter is required for the packaged build.
 2. Install Nmap separately and ensure the executable is discoverable on `PATH`:
    - **Windows:** download the official installer from <https://nmap.org/download.html>, install with default options, then open a new Command Prompt and confirm `nmap --version` works.
-   - **macOS:** `brew install nmap` or use the dmg installer from nmap.org.
+   - **macOS (arm64 build):** Releases ship Apple Silicon binaries tested on macOS 15+. Intel Macs should run from source (`python -m nmap_gui.main`) or translate via Rosetta if available. Install Nmap via `brew install nmap` or the official dmg.
    - **Linux:** install via your package manager (e.g., `sudo apt install nmap`).
 3. Place the downloaded Rogue Finder binary and this manual in the same directory for convenience.
 

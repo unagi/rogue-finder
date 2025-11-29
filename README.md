@@ -63,4 +63,4 @@ The project recommends the [uv](https://docs.astral.sh/uv/) toolchain for fast, 
 
 ## Platform Notes
 - **Windows:** First launch of the unsigned binary may trigger SmartScreen. Click **More info** → **Run anyway** if you trust the build.
-- **macOS:** Gatekeeper tags downloaded binaries with the `com.apple.quarantine` attribute. Run `xattr -dr com.apple.quarantine /path/to/rogue-finder` (adjusting the path to where you saved the app) before double-clicking the executable, otherwise macOS will refuse to open it.
+- **macOS:** Release binaries target Apple Silicon (arm64). Intel Macs should run the app from source (`python -m nmap_gui.main`). Gatekeeper tags downloaded binaries with the `com.apple.quarantine` attribute; run `xattr -dr com.apple.quarantine /path/to/rogue-finder` before first launch.
