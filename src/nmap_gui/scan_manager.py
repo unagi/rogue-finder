@@ -62,7 +62,7 @@ class ScanWorker(QObject):
                 }
                 completed = 0
                 for future in as_completed(futures):
-                    if self._cancel_event.is_set():
+                    if self._cancel_token and self._cancel_token.is_set():
                         break
                     try:
                         result = future.result()
@@ -71,7 +71,7 @@ class ScanWorker(QObject):
                         self.error.emit(f"Scan failed: {exc}")
                     completed += 1
                     self.progress.emit(completed, total)
-                    if self._cancel_event.is_set():
+                    if self._cancel_token and self._cancel_token.is_set():
                         break
         finally:
             self.finished.emit()
