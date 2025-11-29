@@ -3,7 +3,12 @@ from __future__ import annotations
 
 import multiprocessing as mp
 import os
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import (
+    ProcessPoolExecutor,
+    ThreadPoolExecutor,
+    BrokenProcessPool,
+    as_completed,
+)
 from multiprocessing.connection import Connection
 from typing import Optional
 
@@ -27,6 +32,7 @@ class ScanWorker(QObject):
         self._cancel_tx: Optional[Connection] = None
         self._cancel_token: Optional[PipeCancelToken] = None
         self._init_cancel_token()
+        self._use_threads = os.name == "nt"
 
     @Slot()
     def start(self) -> None:
@@ -39,7 +45,11 @@ class ScanWorker(QObject):
         ctx = self._mp_context
         max_workers = min(total, os.cpu_count() or 1)
         try:
-            with ProcessPoolExecutor(max_workers=max_workers, mp_context=ctx) as executor:
+            executor_kwargs = {"max_workers": max_workers}
+            executor_cls = ThreadPoolExecutor if self._use_threads else ProcessPoolExecutor
+            if not self._use_threads:
+                executor_kwargs["mp_context"] = ctx
+            with executor_cls(**executor_kwargs) as executor:
                 futures = {
                     executor.submit(
                         run_full_scan,
@@ -56,6 +66,11 @@ class ScanWorker(QObject):
                     try:
                         result = future.result()
                         self.result_ready.emit(result)
+                    except BrokenProcessPool as exc:
+                        self.error.emit(
+                            "Scan failed: worker processes terminated unexpectedly; retrying with fewer targets or restarting may help"
+                        )
+                        break
                     except Exception as exc:  # noqa: BLE001
                         self.error.emit(f"Scan failed: {exc}")
                     completed += 1
