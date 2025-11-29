@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import multiprocessing as mp
 import os
+import sys
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 
 try:  # Python embedded in PyInstaller on Windows may lack BrokenProcessPool
@@ -25,6 +26,12 @@ from .nmap_runner import run_full_scan
 from .cancel_token import PipeCancelToken, create_pipe_cancel_token
 
 
+def _should_use_threads() -> bool:
+    """Return True when multiprocessing executors are known to be unstable."""
+
+    return os.name == "nt" or sys.platform == "darwin"
+
+
 class ScanWorker(QObject):
     progress = Signal(int, int)
     result_ready = Signal(object)
@@ -38,7 +45,7 @@ class ScanWorker(QObject):
         self._cancel_tx: Optional[Connection] = None
         self._cancel_token: Optional[PipeCancelToken] = None
         self._init_cancel_token()
-        self._use_threads = os.name == "nt"
+        self._use_threads = _should_use_threads()
 
     @Slot()
     def start(self) -> None:
