@@ -60,3 +60,7 @@ The project recommends the [uv](https://docs.astral.sh/uv/) toolchain for fast, 
 - GitHub Actions now bundles the app with PyInstaller.
 - Every push to `main` builds the Windows binary so merge commits stay green.
 - Pushing a Git tag (for example `v1.0.0`) triggers both Windows and macOS builds. Each job uploads its PyInstaller output as an artifact you can attach to a GitHub Release.
+
+## Platform Notes
+- **Windows:** First launch of the unsigned binary may trigger SmartScreen. Click **More info** → **Run anyway** if you trust the build.
+- **macOS:** Gatekeeper tags downloaded binaries with the `com.apple.quarantine` attribute. Run `xattr -dr com.apple.quarantine /path/to/rogue-finder` (adjusting the path to where you saved the app) before double-clicking the executable, otherwise macOS will refuse to open it.

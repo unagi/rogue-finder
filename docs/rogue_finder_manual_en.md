@@ -44,6 +44,7 @@ Rogue Finder surfaces consistent error codes everywhere (GUI table, dialogs, exp
 
 ## Additional Notes
 - **SmartScreen warnings (Windows):** Unsigned executables often trigger Microsoft Defender SmartScreen (“Windows protected your PC”). Click “More info” and “Run anyway” only if you trust the binary source (your build or the official release). Consider signing the executable with your organization’s certificate for widespread deployment.
+- **Gatekeeper quarantine (macOS):** Finder marks downloads with `com.apple.quarantine`, so double-clicking the app may display “rogue-finder cannot be opened because it is from an unidentified developer.” Open **Terminal** in the download directory and run `xattr -dr com.apple.quarantine ./rogue-finder` (replace the path as needed), or right-click → **Open** twice to whitelist the binary.
 - **Antivirus exclusions:** Some security suites throttle Nmap subprocesses. If scans consistently time out, temporarily allow `nmap.exe` and `rogue-finder.exe` or run from an approved workstation.
 - **Data handling:** Exported CSV/JSON files include full score breakdowns and error logs. Treat them as sensitive because they may reveal internal hostnames or service exposure.
 
