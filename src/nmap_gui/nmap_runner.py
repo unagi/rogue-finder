@@ -85,8 +85,9 @@ def run_nmap(args: Sequence[str], timeout: int = DEFAULT_TIMEOUT) -> str:
         startupinfo=_WINDOWS_STARTUPINFO,
         creationflags=_WINDOWS_CREATION_FLAGS,
     )
-    if proc.returncode not in (0, 1):
-        raise NmapExecutionError(proc.stderr.strip() or "nmap execution failed")
+    if proc.returncode != 0:
+        detail = proc.stderr.strip() or f"nmap exited with status {proc.returncode}"
+        raise NmapExecutionError(detail)
     return proc.stdout
 
 
@@ -133,7 +134,10 @@ def run_full_scan(target: str, scan_modes: Set[ScanMode], cancel_event: MpEvent 
             return apply_rating(result)
         if ScanMode.ICMP in scan_modes:
             xml_text = run_nmap(["nmap", "-sn", "-PE", target])
-            result.is_alive = parse_icmp_alive(xml_text)
+            try:
+                result.is_alive = parse_icmp_alive(xml_text)
+            except ET.ParseError as exc:
+                raise NmapExecutionError(f"Failed to parse ICMP XML: {exc}") from exc
         if cancel_event and cancel_event.is_set():
             errors.append(build_error(ERROR_SCAN_ABORTED))
             result.errors = errors
@@ -142,7 +146,10 @@ def run_full_scan(target: str, scan_modes: Set[ScanMode], cancel_event: MpEvent 
         if ScanMode.PORTS in scan_modes and (result.is_alive or ScanMode.ICMP not in scan_modes):
             port_list = ",".join(str(p) for p in PORT_SCAN_LIST)
             xml_text = run_nmap(["nmap", "-sS", "-p", port_list, target, "-T4"])
-            result.open_ports = parse_open_ports(xml_text)
+            try:
+                result.open_ports = parse_open_ports(xml_text)
+            except ET.ParseError as exc:
+                raise NmapExecutionError(f"Failed to parse port scan XML: {exc}") from exc
             result.high_ports = [p for p in result.open_ports if p >= 50000]
         if cancel_event and cancel_event.is_set():
             errors.append(build_error(ERROR_SCAN_ABORTED))
@@ -151,7 +158,10 @@ def run_full_scan(target: str, scan_modes: Set[ScanMode], cancel_event: MpEvent 
 
         if ScanMode.OS in scan_modes and (result.is_alive or ScanMode.ICMP not in scan_modes):
             xml_text = run_nmap(["nmap", "-O", "-Pn", target])
-            os_guess, accuracy = parse_os_guess(xml_text)
+            try:
+                os_guess, accuracy = parse_os_guess(xml_text)
+            except ET.ParseError as exc:
+                raise NmapExecutionError(f"Failed to parse OS detection XML: {exc}") from exc
             result.os_guess = os_guess
             result.os_accuracy = accuracy
         if cancel_event and cancel_event.is_set():
