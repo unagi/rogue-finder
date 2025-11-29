@@ -1,0 +1,4 @@
+-r requirements.txt
+pytest>=8.2
+pytest-spec>=3.2
+poethepoet>=0.24

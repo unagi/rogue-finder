@@ -1,0 +1,7 @@
+[tool.pytest.ini_options]
+addopts = "--spec"
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.poe.tasks]
+test = "pytest"
