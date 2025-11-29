@@ -64,3 +64,4 @@ The project recommends the [uv](https://docs.astral.sh/uv/) toolchain for fast, 
 ## Platform Notes
 - **Windows:** First launch of the unsigned binary may trigger SmartScreen. Click **More info** → **Run anyway** if you trust the build.
 - **macOS:** Release binaries target Apple Silicon (arm64). Intel Macs should run the app from source (`python -m nmap_gui.main`). Gatekeeper tags downloaded binaries with the `com.apple.quarantine` attribute; run `xattr -dr com.apple.quarantine /path/to/rogue-finder` before first launch.
+- **macOS / Linux:** The OS fingerprint phase (`-O`) requires root privileges. Restart the app from Terminal with `sudo python3 -m nmap_gui.main --debug` (or `sudo /path/to/rogue-finder` for the packaged binary) when you need OS detection, or uncheck the OS mode to scan without it.

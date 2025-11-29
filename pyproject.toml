@@ -5,3 +5,18 @@ pythonpath = ["src"]
 
 [tool.poe.tasks]
 test = "pytest"
+
+[tool.poe.executor]
+type = "simple"
+
+[tool.poe.tasks.build-macos]
+cmd = """
+./.venv/bin/pyinstaller \
+  src/nmap_gui/main.py \
+  --name rogue-finder \
+  --noconfirm \
+  --onefile \
+  --windowed
+"""
+env.PYINSTALLER_CONFIG_DIR = "{project_root}/.pyinstaller"
+env.PYINSTALLER_CACHE_DIR = "{project_root}/.pyinstaller"
