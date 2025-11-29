@@ -11,17 +11,7 @@ from PySide6.QtCore import QObject, QThread, Signal, Slot
 
 from .models import ScanConfig
 from .nmap_runner import run_full_scan
-
-
-class PipeCancelToken:
-    """Lightweight cancellation primitive backed by a one-way Pipe."""
-
-    def __init__(self, connection: Connection):
-        self._connection = connection
-
-    def is_set(self) -> bool:
-        return self._connection.poll()
-
+from .cancel_token import PipeCancelToken, create_pipe_cancel_token
 
 
 class ScanWorker(QObject):
@@ -35,7 +25,6 @@ class ScanWorker(QObject):
         self._config = config
         self._mp_context = mp.get_context("spawn")
         self._cancel_tx: Optional[Connection] = None
-        self._cancel_rx: Optional[Connection] = None
         self._cancel_token: Optional[PipeCancelToken] = None
         self._init_cancel_token()
 
@@ -85,18 +74,16 @@ class ScanWorker(QObject):
                 pass
 
     def _init_cancel_token(self) -> None:
-        rx, tx = self._mp_context.Pipe(duplex=False)
+        tx, token = create_pipe_cancel_token(self._mp_context)
         self._cancel_tx = tx
-        self._cancel_rx = rx
-        self._cancel_token = PipeCancelToken(rx)
+        self._cancel_token = token
 
     def _close_cancel_token(self) -> None:
         if self._cancel_tx is not None:
             self._cancel_tx.close()
-        if self._cancel_rx is not None:
-            self._cancel_rx.close()
         self._cancel_tx = None
-        self._cancel_rx = None
+        if self._cancel_token is not None:
+            self._cancel_token.close()
         self._cancel_token = None
 
 
