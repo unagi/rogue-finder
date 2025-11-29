@@ -6,16 +6,20 @@ on:
       - main
     tags:
       - '*'
+  workflow_dispatch:
 
 jobs:
   build-windows:
     name: Windows
     runs-on: windows-latest
     if: >-
-      github.event_name == 'push' &&
+      github.event_name == 'workflow_dispatch' ||
       (
-        github.ref_type == 'tag' ||
-        github.ref == 'refs/heads/main'
+        github.event_name == 'push' &&
+        (
+          github.ref_type == 'tag' ||
+          github.ref == 'refs/heads/main'
+        )
       )
     steps:
       - name: Checkout
@@ -57,8 +61,11 @@ jobs:
     name: macOS
     runs-on: macos-13
     if: >-
-      github.event_name == 'push' &&
-      github.ref_type == 'tag'
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'push' &&
+        github.ref_type == 'tag'
+      )
     steps:
       - name: Checkout
         uses: actions/checkout@v4
