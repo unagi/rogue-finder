@@ -86,3 +86,23 @@ def test_run_full_scan_converts_parse_errors_to_rf004(monkeypatch):
     result = nmap_runner.run_full_scan("127.0.0.1", {ScanMode.ICMP})
     assert result.errors
     assert result.errors[0].code == "RF004"
+
+
+def test_run_full_scan_falls_back_to_tcp_connect_when_syn_requires_root(monkeypatch):
+    calls = []
+
+    def fake_run_nmap(args, timeout=nmap_runner.DEFAULT_TIMEOUT):  # noqa: ANN001, ANN202 - pytest helper
+        calls.append(args)
+        if "-sS" in args:
+            raise nmap_runner.NmapExecutionError(
+                "You requested a scan type which requires root privileges"
+            )
+        return PORT_XML
+
+    monkeypatch.setattr(nmap_runner, "run_nmap", fake_run_nmap)
+
+    result = nmap_runner.run_full_scan("127.0.0.1", {ScanMode.PORTS})
+
+    assert not result.errors
+    assert result.open_ports == [22, 80]
+    assert any("-sT" in call for call in calls)

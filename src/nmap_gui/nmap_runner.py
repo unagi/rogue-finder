@@ -46,6 +46,12 @@ PORT_SCAN_LIST = [
     50000,
 ]
 
+_PRIVILEGED_SCAN_PATTERNS = (
+    "requires root privileges",
+    "requires administrator privileges",
+    "requires privileged access",
+)
+
 if os.name == "nt":
     _WINDOWS_STARTUPINFO = subprocess.STARTUPINFO()
     _WINDOWS_STARTUPINFO.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0)
@@ -145,7 +151,24 @@ def run_full_scan(target: str, scan_modes: Set[ScanMode], cancel_event: MpEvent 
 
         if ScanMode.PORTS in scan_modes and (result.is_alive or ScanMode.ICMP not in scan_modes):
             port_list = ",".join(str(p) for p in PORT_SCAN_LIST)
-            xml_text = run_nmap(["nmap", "-sS", "-p", port_list, target, "-T4"])
+            port_args = ["nmap", "-sS", "-p", port_list, target, "-T4"]
+            try:
+                xml_text = run_nmap(port_args)
+            except NmapExecutionError as exc:
+                if _requires_privileged_scan(str(exc)):
+                    LOGGER.info(
+                        "SYN scan requires elevated privileges; retrying with TCP connect scan (-sT)."
+                    )
+                    xml_text = run_nmap([
+                        "nmap",
+                        "-sT",
+                        "-p",
+                        port_list,
+                        target,
+                        "-T4",
+                    ])
+                else:
+                    raise
             try:
                 result.open_ports = parse_open_ports(xml_text)
             except ET.ParseError as exc:
@@ -181,3 +204,10 @@ def run_full_scan(target: str, scan_modes: Set[ScanMode], cancel_event: MpEvent 
 
     rated = apply_rating(result)
     return rated
+
+
+def _requires_privileged_scan(detail: str | None) -> bool:
+    if not detail:
+        return False
+    lowered = detail.lower()
+    return any(pattern in lowered for pattern in _PRIVILEGED_SCAN_PATTERNS)
