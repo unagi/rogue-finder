@@ -21,7 +21,10 @@ class ScanWorker(QObject):
         super().__init__()
         self._config = config
         self._mp_context = mp.get_context("spawn")
-        self._cancel_event = self._mp_context.Event()
+        # Manager-based Event can be shared with spawn-based executors without
+        # triggering "Condition objects" errors on Windows.
+        self._manager = self._mp_context.Manager()
+        self._cancel_event = self._manager.Event()
 
     @Slot()
     def start(self) -> None:
@@ -29,28 +32,32 @@ class ScanWorker(QObject):
         total = len(targets)
         if not targets:
             self.finished.emit()
+            self._manager.shutdown()
             return
         ctx = self._mp_context
         max_workers = min(total, os.cpu_count() or 1)
-        with ProcessPoolExecutor(max_workers=max_workers, mp_context=ctx) as executor:
-            futures = {
-                executor.submit(run_full_scan, target, self._config.scan_modes, self._cancel_event): target
-                for target in targets
-            }
-            completed = 0
-            for future in as_completed(futures):
-                if self._cancel_event.is_set():
-                    break
-                try:
-                    result = future.result()
-                    self.result_ready.emit(result)
-                except Exception as exc:  # noqa: BLE001
-                    self.error.emit(f"Scan failed: {exc}")
-                completed += 1
-                self.progress.emit(completed, total)
-                if self._cancel_event.is_set():
-                    break
-        self.finished.emit()
+        try:
+            with ProcessPoolExecutor(max_workers=max_workers, mp_context=ctx) as executor:
+                futures = {
+                    executor.submit(run_full_scan, target, self._config.scan_modes, self._cancel_event): target
+                    for target in targets
+                }
+                completed = 0
+                for future in as_completed(futures):
+                    if self._cancel_event.is_set():
+                        break
+                    try:
+                        result = future.result()
+                        self.result_ready.emit(result)
+                    except Exception as exc:  # noqa: BLE001
+                        self.error.emit(f"Scan failed: {exc}")
+                    completed += 1
+                    self.progress.emit(completed, total)
+                    if self._cancel_event.is_set():
+                        break
+        finally:
+            self.finished.emit()
+            self._manager.shutdown()
 
     def request_stop(self) -> None:
         self._cancel_event.set()
