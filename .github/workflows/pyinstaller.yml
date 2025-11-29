@@ -142,10 +142,22 @@ jobs:
         run: |
           set -euo pipefail
           cd release/windows
-          mv upload rogue-finder-windows
+          shopt -s dotglob nullglob
+          mkdir rogue-finder-windows
+          for entry in *; do
+            if [[ "$entry" != "rogue-finder-windows" ]]; then
+              mv "$entry" rogue-finder-windows/
+            fi
+          done
           zip -r ../../rogue-finder-windows-${{ github.ref_name }}.zip rogue-finder-windows
           cd ../macos
-          mv upload rogue-finder-macos
+          shopt -s dotglob nullglob
+          mkdir rogue-finder-macos
+          for entry in *; do
+            if [[ "$entry" != "rogue-finder-macos" ]]; then
+              mv "$entry" rogue-finder-macos/
+            fi
+          done
           zip -r ../../rogue-finder-macos-${{ github.ref_name }}.zip rogue-finder-macos
 
       - name: Publish GitHub Release assets
