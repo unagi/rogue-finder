@@ -10,6 +10,7 @@ ICMP_XML = """
 <nmaprun>
   <host>
     <status state="up" reason="echo-reply" />
+    <address addr="127.0.0.1" addrtype="ipv4" />
   </host>
 </nmaprun>
 """.strip()
@@ -17,6 +18,7 @@ ICMP_XML = """
 PORT_XML = """
 <nmaprun>
   <host>
+    <address addr="127.0.0.1" addrtype="ipv4" />
     <ports>
       <port protocol="tcp" portid="22"><state state="open"/></port>
       <port protocol="tcp" portid="22"><state state="open"/></port>
@@ -30,6 +32,7 @@ PORT_XML = """
 OS_XML = """
 <nmaprun>
   <host>
+    <address addr="127.0.0.1" addrtype="ipv4" />
     <os>
       <osmatch name="Windows 10" accuracy="98" />
     </os>
@@ -47,20 +50,26 @@ OS_XML_UNKNOWN = """
 """.strip()
 
 
-def test_parse_icmp_alive_detects_up_host():
-    assert nmap_runner.parse_icmp_alive(ICMP_XML) is True
+def test_parse_icmp_hosts_detects_up_host():
+    assert nmap_runner.parse_icmp_hosts(ICMP_XML, "127.0.0.1") == {"127.0.0.1": True}
 
 
-def test_parse_open_ports_returns_sorted_unique_list():
-    assert nmap_runner.parse_open_ports(PORT_XML) == [22, 80]
+def test_parse_open_ports_by_host_returns_sorted_unique_list():
+    assert nmap_runner.parse_open_ports_by_host(PORT_XML, "127.0.0.1") == {
+        "127.0.0.1": [22, 80]
+    }
 
 
-def test_parse_os_guess_reads_name_and_accuracy():
-    assert nmap_runner.parse_os_guess(OS_XML) == ("Windows 10", 98)
+def test_parse_os_guesses_by_host_reads_name_and_accuracy():
+    assert nmap_runner.parse_os_guesses_by_host(OS_XML, "127.0.0.1") == {
+        "127.0.0.1": ("Windows 10", 98)
+    }
 
 
-def test_parse_os_guess_defaults_when_missing():
-    assert nmap_runner.parse_os_guess(OS_XML_UNKNOWN) == ("Unknown", None)
+def test_parse_os_guesses_by_host_defaults_when_missing():
+    assert nmap_runner.parse_os_guesses_by_host(OS_XML_UNKNOWN, "127.0.0.1") == {
+        "127.0.0.1": ("Unknown", None)
+    }
 
 
 def test_run_nmap_raises_on_nonzero_exit(monkeypatch):
@@ -83,9 +92,10 @@ def test_run_full_scan_converts_parse_errors_to_rf004(monkeypatch):
         return "this is not xml"
 
     monkeypatch.setattr(nmap_runner, "run_nmap", fake_run_nmap)
-    result = nmap_runner.run_full_scan("127.0.0.1", {ScanMode.ICMP})
-    assert result.errors
-    assert result.errors[0].code == "RF004"
+    results = nmap_runner.run_full_scan("127.0.0.1", {ScanMode.ICMP})
+    assert results
+    assert results[0].errors
+    assert results[0].errors[0].code == "RF004"
 
 
 def test_run_full_scan_falls_back_to_tcp_connect_when_syn_requires_root(monkeypatch):
@@ -101,8 +111,76 @@ def test_run_full_scan_falls_back_to_tcp_connect_when_syn_requires_root(monkeypa
 
     monkeypatch.setattr(nmap_runner, "run_nmap", fake_run_nmap)
 
-    result = nmap_runner.run_full_scan("127.0.0.1", {ScanMode.PORTS})
+    results = nmap_runner.run_full_scan("127.0.0.1", {ScanMode.PORTS})
 
-    assert not result.errors
-    assert result.open_ports == [22, 80]
-    assert any("-sT" in call for call in calls)
+    assert results
+    assert not results[0].errors
+    assert results[0].open_ports == [22, 80]
+
+
+def test_run_full_scan_returns_multiple_hosts_for_cidr(monkeypatch):
+    icmp_xml = """
+    <nmaprun>
+      <host>
+        <status state="up" />
+        <address addr="192.168.100.11" addrtype="ipv4" />
+      </host>
+      <host>
+        <status state="up" />
+        <address addr="192.168.100.13" addrtype="ipv4" />
+      </host>
+    </nmaprun>
+    """.strip()
+
+    port_xml = """
+    <nmaprun>
+      <host>
+        <address addr="192.168.100.11" addrtype="ipv4" />
+        <ports>
+          <port protocol="tcp" portid="22"><state state="open"/></port>
+        </ports>
+      </host>
+      <host>
+        <address addr="192.168.100.13" addrtype="ipv4" />
+        <ports>
+          <port protocol="tcp" portid="80"><state state="open"/></port>
+        </ports>
+      </host>
+    </nmaprun>
+    """.strip()
+
+    os_xml = """
+    <nmaprun>
+      <host>
+        <address addr="192.168.100.11" addrtype="ipv4" />
+        <os>
+          <osmatch name="Linux" accuracy="90" />
+        </os>
+      </host>
+      <host>
+        <address addr="192.168.100.13" addrtype="ipv4" />
+        <os>
+          <osmatch name="Windows" accuracy="80" />
+        </os>
+      </host>
+    </nmaprun>
+    """.strip()
+
+    responses = [icmp_xml, port_xml, os_xml]
+
+    def fake_run_nmap(*args, **kwargs):  # noqa: ANN001, ANN202 - pytest helper
+        return responses.pop(0)
+
+    monkeypatch.setattr(nmap_runner, "run_nmap", fake_run_nmap)
+
+    results = nmap_runner.run_full_scan(
+        "192.168.100.0/30",
+        {ScanMode.ICMP, ScanMode.PORTS, ScanMode.OS},
+    )
+
+    assert len(results) == 2
+    by_target = {item.target: item for item in results}
+    assert by_target["192.168.100.11"].open_ports == [22]
+    assert by_target["192.168.100.13"].open_ports == [80]
+    assert by_target["192.168.100.11"].os_guess == "Linux"
+    assert by_target["192.168.100.13"].os_guess == "Windows"

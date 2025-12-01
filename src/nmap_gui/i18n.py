@@ -40,6 +40,13 @@ _TRANSLATIONS: Dict[str, Translations] = {
         "missing_modes_body": "Select at least one scan mode",
         "no_results_title": "No results",
         "no_results_body": "Scan results are empty",
+        "summary_title": "Scan Summary",
+        "summary_template": (
+            "Targets: {targets} | Addresses queued: {requested} | "
+            "Hosts found: {discovered} | Alive: {alive} | Status: {status}"
+        ),
+        "summary_status_idle": "Idle",
+        "summary_status_no_hosts": "No hosts responded",
         "table_target": "Target",
         "table_alive": "Alive",
         "table_ports": "Ports",
@@ -101,6 +108,13 @@ _TRANSLATIONS: Dict[str, Translations] = {
         "missing_modes_body": "少なくとも1つのスキャンモードを選択してください",
         "no_results_title": "結果なし",
         "no_results_body": "スキャン結果がありません",
+        "summary_title": "結果サマリ",
+        "summary_template": (
+            "ターゲット: {targets} | 想定ノード数: {requested} | "
+            "検出ノード: {discovered} | 生存: {alive} | 状態: {status}"
+        ),
+        "summary_status_idle": "未実行",
+        "summary_status_no_hosts": "ホストは検出されませんでした",
         "table_target": "ターゲット",
         "table_alive": "生存",
         "table_ports": "ポート",
