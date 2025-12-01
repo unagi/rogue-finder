@@ -1,12 +1,13 @@
 """Wrapper utilities for invoking nmap as a subprocess."""
 from __future__ import annotations
 
+import ipaddress
 import logging
 import os
 import shutil
 import subprocess
 import xml.etree.ElementTree as ET
-from typing import List, Sequence, Set
+from typing import Dict, List, Sequence, Set, Tuple
 
 from multiprocessing.synchronize import Event as MpEvent
 
@@ -97,59 +98,121 @@ def run_nmap(args: Sequence[str], timeout: int = DEFAULT_TIMEOUT) -> str:
     return proc.stdout
 
 
-def parse_icmp_alive(xml_text: str) -> bool:
+def _extract_host_key(host_node: ET.Element, default: str) -> str:
+    for address in host_node.findall("address"):
+        addrtype = address.attrib.get("addrtype")
+        if addrtype in {"ipv4", "ipv6"}:
+            addr = address.attrib.get("addr")
+            if addr:
+                return addr
+    hostname = host_node.find("hostnames/hostname")
+    if hostname is not None:
+        name = hostname.attrib.get("name")
+        if name:
+            return name
+    return default
+
+
+def parse_icmp_hosts(xml_text: str, default_target: str) -> Dict[str, bool]:
+    """Return a mapping of host identifier -> ICMP reachability."""
+
+    hosts: Dict[str, bool] = {}
     root = ET.fromstring(xml_text)
     for host in root.findall("host"):
         state = host.find("status")
-        if state is not None and state.attrib.get("state") == "up":
-            return True
-    return False
+        if state is None or state.attrib.get("state") != "up":
+            continue
+        key = _extract_host_key(host, default_target)
+        hosts[key] = True
+    return hosts
 
 
-def parse_open_ports(xml_text: str) -> List[int]:
-    ports: List[int] = []
+def parse_open_ports_by_host(xml_text: str, default_target: str) -> Dict[str, List[int]]:
+    """Return a mapping of host identifier -> sorted list of open ports."""
+
     root = ET.fromstring(xml_text)
+    ports_by_host: Dict[str, List[int]] = {}
     for host in root.findall("host"):
+        key = _extract_host_key(host, default_target)
+        ports: List[int] = []
         for port in host.findall("ports/port"):
             state = port.find("state")
             if state is not None and state.attrib.get("state") == "open":
                 portid = port.attrib.get("portid")
                 if portid:
                     ports.append(int(portid))
-    return sorted(set(ports))
+        ports_by_host[key] = sorted(set(ports))
+    return ports_by_host
 
 
-def parse_os_guess(xml_text: str) -> tuple[str, int | None]:
+def parse_os_guesses_by_host(
+    xml_text: str, default_target: str
+) -> Dict[str, Tuple[str, int | None]]:
+    """Return a mapping of host identifier -> (guess, accuracy)."""
+
     root = ET.fromstring(xml_text)
-    os_element = root.find("host/os/osmatch")
-    if os_element is not None:
-        name = os_element.attrib.get("name", "Unknown")
-        accuracy = os_element.attrib.get("accuracy")
-        return name, int(accuracy) if accuracy else None
-    return "Unknown", None
+    guesses: Dict[str, Tuple[str, int | None]] = {}
+    for host in root.findall("host"):
+        key = _extract_host_key(host, default_target)
+        os_element = host.find("os/osmatch")
+        name = "Unknown"
+        accuracy_val: int | None = None
+        if os_element is not None:
+            name = os_element.attrib.get("name", "Unknown")
+            accuracy = os_element.attrib.get("accuracy")
+            accuracy_val = int(accuracy) if accuracy else None
+        guesses[key] = (name, accuracy_val)
+    return guesses
 
 
-def run_full_scan(target: str, scan_modes: Set[ScanMode], cancel_event: MpEvent | None = None) -> HostScanResult:
-    result = HostScanResult(target=target)
+def run_full_scan(
+    target: str, scan_modes: Set[ScanMode], cancel_event: MpEvent | None = None
+) -> List[HostScanResult]:
     errors: List[ErrorRecord] = []
+    host_results: Dict[str, HostScanResult] = {}
+    has_icmp_alive = False
+
+    def _ensure_host(host_key: str) -> HostScanResult:
+        if host_key not in host_results:
+            host_results[host_key] = HostScanResult(target=host_key)
+        return host_results[host_key]
+
+    def _finalize() -> List[HostScanResult]:
+        if host_results:
+            rated: List[HostScanResult] = []
+            for item in host_results.values():
+                item.errors = list(errors)
+                rated.append(apply_rating(item))
+            return rated
+        if errors or not _is_network_target(target):
+            placeholder = HostScanResult(target=target, errors=list(errors))
+            return [apply_rating(placeholder)]
+        return []
+
+    def _handle_cancel() -> List[HostScanResult]:
+        if not any(err.code == ERROR_SCAN_ABORTED.code for err in errors):
+            errors.append(build_error(ERROR_SCAN_ABORTED))
+        return _finalize()
 
     try:
         if cancel_event and cancel_event.is_set():
-            errors.append(build_error(ERROR_SCAN_ABORTED))
-            result.errors = errors
-            return apply_rating(result)
+            return _handle_cancel()
         if ScanMode.ICMP in scan_modes:
             xml_text = run_nmap(["nmap", "-sn", "-PE", target])
             try:
-                result.is_alive = parse_icmp_alive(xml_text)
+                alive_hosts = parse_icmp_hosts(xml_text, target)
             except ET.ParseError as exc:
                 raise NmapExecutionError(f"Failed to parse ICMP XML: {exc}") from exc
+            for host_key in alive_hosts:
+                _ensure_host(host_key).is_alive = True
+            has_icmp_alive = bool(alive_hosts)
         if cancel_event and cancel_event.is_set():
-            errors.append(build_error(ERROR_SCAN_ABORTED))
-            result.errors = errors
-            return apply_rating(result)
+            return _handle_cancel()
 
-        if ScanMode.PORTS in scan_modes and (result.is_alive or ScanMode.ICMP not in scan_modes):
+        should_scan_ports = ScanMode.PORTS in scan_modes and (
+            has_icmp_alive or ScanMode.ICMP not in scan_modes
+        )
+        if should_scan_ports:
             port_list = ",".join(str(p) for p in PORT_SCAN_LIST)
             port_args = ["nmap", "-sS", "-p", port_list, target, "-T4"]
             try:
@@ -170,27 +233,31 @@ def run_full_scan(target: str, scan_modes: Set[ScanMode], cancel_event: MpEvent 
                 else:
                     raise
             try:
-                result.open_ports = parse_open_ports(xml_text)
+                port_map = parse_open_ports_by_host(xml_text, target)
             except ET.ParseError as exc:
                 raise NmapExecutionError(f"Failed to parse port scan XML: {exc}") from exc
-            result.high_ports = [p for p in result.open_ports if p >= 50000]
+            for host_key, ports in port_map.items():
+                host_result = _ensure_host(host_key)
+                host_result.open_ports = ports
+                host_result.high_ports = [p for p in ports if p >= 50000]
         if cancel_event and cancel_event.is_set():
-            errors.append(build_error(ERROR_SCAN_ABORTED))
-            result.errors = errors
-            return apply_rating(result)
+            return _handle_cancel()
 
-        if ScanMode.OS in scan_modes and (result.is_alive or ScanMode.ICMP not in scan_modes):
+        should_scan_os = ScanMode.OS in scan_modes and (
+            has_icmp_alive or ScanMode.ICMP not in scan_modes
+        )
+        if should_scan_os:
             xml_text = run_nmap(["nmap", "-O", "-Pn", target])
             try:
-                os_guess, accuracy = parse_os_guess(xml_text)
+                os_map = parse_os_guesses_by_host(xml_text, target)
             except ET.ParseError as exc:
                 raise NmapExecutionError(f"Failed to parse OS detection XML: {exc}") from exc
-            result.os_guess = os_guess
-            result.os_accuracy = accuracy
+            for host_key, (guess, accuracy) in os_map.items():
+                host_result = _ensure_host(host_key)
+                host_result.os_guess = guess
+                host_result.os_accuracy = accuracy
         if cancel_event and cancel_event.is_set():
-            errors.append(build_error(ERROR_SCAN_ABORTED))
-            result.errors = errors
-            return apply_rating(result)
+            return _handle_cancel()
 
     except NmapNotInstalledError:
         errors.append(build_error(ERROR_NMAP_NOT_FOUND))
@@ -199,11 +266,8 @@ def run_full_scan(target: str, scan_modes: Set[ScanMode], cancel_event: MpEvent 
         errors.append(build_error(ERROR_NMAP_TIMEOUT, timeout=timeout_value))
     except NmapExecutionError as exc:
         errors.append(build_error(ERROR_NMAP_FAILED, detail=str(exc)))
-    finally:
-        result.errors = errors
 
-    rated = apply_rating(result)
-    return rated
+    return _finalize()
 
 
 def _requires_privileged_scan(detail: str | None) -> bool:
@@ -211,3 +275,11 @@ def _requires_privileged_scan(detail: str | None) -> bool:
         return False
     lowered = detail.lower()
     return any(pattern in lowered for pattern in _PRIVILEGED_SCAN_PATTERNS)
+
+
+def _is_network_target(target: str) -> bool:
+    try:
+        network = ipaddress.ip_network(target, strict=False)
+    except ValueError:
+        return False
+    return network.num_addresses > 1

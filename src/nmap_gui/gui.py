@@ -1,11 +1,12 @@
 """PySide6 GUI for the Nmap discovery & rating application."""
 from __future__ import annotations
 
+import ipaddress
 import os
 import shlex
 import sys
 from pathlib import Path
-from typing import List, Set
+from typing import List, Sequence, Set
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
@@ -57,6 +58,11 @@ class MainWindow(QMainWindow):
         self._scan_manager = ScanManager()
         self._sort_column: int | None = None
         self._sort_order = Qt.AscendingOrder
+        self.summary_label: QLabel | None = None
+        self._target_count = 0
+        self._requested_host_estimate = 0
+        self._summary_status = self._t("summary_status_idle")
+        self._summary_has_error = False
         self._setup_scan_manager()
         self._build_ui()
 
@@ -72,9 +78,11 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(central)
         layout.addWidget(self._create_settings_panel())
         layout.addWidget(self._create_table())
+        layout.addWidget(self._create_summary_panel())
         layout.addLayout(self._create_export_bar())
         self.setCentralWidget(central)
         self.statusBar().showMessage(self._t("ready"))
+        self._update_summary()
 
     def _create_settings_panel(self) -> QWidget:
         group = QGroupBox(self._t("scan_settings"))
@@ -140,6 +148,14 @@ class MainWindow(QMainWindow):
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         return self.table
 
+    def _create_summary_panel(self) -> QWidget:
+        group = QGroupBox(self._t("summary_title"))
+        layout = QVBoxLayout(group)
+        self.summary_label = QLabel("")
+        self.summary_label.setWordWrap(True)
+        layout.addWidget(self.summary_label)
+        return group
+
     def _create_export_bar(self) -> QHBoxLayout:
         bar = QHBoxLayout()
         bar.addStretch()
@@ -150,6 +166,33 @@ class MainWindow(QMainWindow):
         bar.addWidget(export_csv_btn)
         bar.addWidget(export_json_btn)
         return bar
+
+    def _estimate_requested_hosts(self, targets: Sequence[str]) -> int:
+        total = 0
+        for entry in targets:
+            total += self._estimate_hosts_for_target(entry)
+        return total
+
+    def _estimate_hosts_for_target(self, target: str) -> int:
+        try:
+            network = ipaddress.ip_network(target, strict=False)
+        except ValueError:
+            return 1
+        return network.num_addresses
+
+    def _update_summary(self) -> None:
+        if not self.summary_label:
+            return
+        discovered = len(self._results)
+        alive = sum(1 for result in self._results if result.is_alive)
+        summary_text = self._t("summary_template").format(
+            targets=self._target_count,
+            requested=self._requested_host_estimate,
+            discovered=discovered,
+            alive=alive,
+            status=self._summary_status,
+        )
+        self.summary_label.setText(summary_text)
 
     def _collect_scan_modes(self) -> Set[ScanMode]:
         modes: Set[ScanMode] = set()
@@ -181,8 +224,13 @@ class MainWindow(QMainWindow):
         if not self._has_required_privileges(modes):
             self._show_privileged_hint()
             return
+        self._target_count = len(targets)
+        self._requested_host_estimate = self._estimate_requested_hosts(targets)
+        self._summary_status = self._t("scanning")
+        self._summary_has_error = False
         self._results.clear()
         self.table.setRowCount(0)
+        self._update_summary()
         config = ScanConfig(targets=targets, scan_modes=modes)
         self._scan_manager.start(config)
         self.start_button.setEnabled(False)
@@ -194,6 +242,8 @@ class MainWindow(QMainWindow):
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
         self.statusBar().showMessage(self._t("scan_stopped"))
+        self._summary_status = self._t("scan_stopped")
+        self._update_summary()
 
     def _on_scan_started(self, total: int) -> None:
         self.progress_bar.setMaximum(max(total, 1))
@@ -230,6 +280,7 @@ class MainWindow(QMainWindow):
             self.table.setSortingEnabled(True)
             if self._sort_column is not None:
                 self.table.sortItems(self._sort_column, self._sort_order)
+        self._update_summary()
 
     def _make_item(
         self, text: str, alignment: Qt.AlignmentFlag | None = None
@@ -273,11 +324,20 @@ class MainWindow(QMainWindow):
             message = str(payload)
         QMessageBox.critical(self, self._t("scan_error_title"), message)
         self.statusBar().showMessage(message)
+        self._summary_has_error = True
+        self._summary_status = message
+        self._update_summary()
 
     def _on_finished(self) -> None:
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
         self.statusBar().showMessage(self._t("scan_finished"))
+        if not self._summary_has_error:
+            if self._results:
+                self._summary_status = self._t("scan_finished")
+            else:
+                self._summary_status = self._t("summary_status_no_hosts")
+        self._update_summary()
 
     def _t(self, key: str) -> str:
         return translate(key, self._language)

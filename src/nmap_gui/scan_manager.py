@@ -78,7 +78,11 @@ class ScanWorker(QObject):
                         break
                     try:
                         result = future.result()
-                        self.result_ready.emit(result)
+                        if isinstance(result, list):
+                            for payload in result:
+                                self.result_ready.emit(payload)
+                        else:
+                            self.result_ready.emit(result)
                     except BrokenProcessPool as exc:
                         self.error.emit(
                             build_error(
