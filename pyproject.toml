@@ -3,8 +3,8 @@ addopts = "--spec"
 testpaths = ["tests"]
 pythonpath = ["src"]
 
-[tool.poe.tasks]
-test = "pytest"
+[tool.poe.tasks.test]
+cmd = "uv run pytest"
 
 [tool.poe.executor]
 type = "simple"

@@ -38,9 +38,10 @@ Add `--debug` for verbose logging.
 The project intentionally keeps dependencies minimal to stay OSS-friendly and portable.
 
 ## Development
-The project recommends the [uv](https://docs.astral.sh/uv/) toolchain for fast, reproducible environments.
+The project standardizes on the [uv](https://docs.astral.sh/uv/) toolchain for fast, reproducible environments (Poe tasks call `uv run` internally).
 
 1. Install uv (see official docs for platform instructions)
+   - もしグローバルに `poe` コマンドを使いたい場合は `uv tool install poethepoet` の後に `uv tool update-shell` を実行すると PATH に追加できます。
 2. Create and activate a virtual environment:
    ```bash
    uv venv
@@ -50,11 +51,11 @@ The project recommends the [uv](https://docs.astral.sh/uv/) toolchain for fast, 
    ```bash
    uv pip install -r requirements-dev.txt
    ```
-4. Run the pytest-spec suite via Poe:
-   ```bash
-   poe test
-   ```
-   (Under the hood this executes `pytest --spec` per `pyproject.toml`.)
+4. Run the pytest-spec suite via Poe (automatically executes `uv run pytest --spec`):
+  ```bash
+  poe test
+  ```
+  (Poe shells out to `uv run pytest --spec` per `pyproject.toml`.)
 
 ## Continuous Integration
 - GitHub Actions now bundles the app with PyInstaller.

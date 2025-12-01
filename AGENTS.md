@@ -24,10 +24,10 @@
 
 ## Developer Workflow
 - Tooling is described in README:
-  1. Install Python 3.11+ and `uv` (recommended but optional).
+  1. Install Python 3.11+ and `uv` (required because Poe tasks call `uv run`). Optional: `uv tool install poethepoet && uv tool update-shell` puts the `poe` shim on PATH even outside a venv.
   2. `uv venv && source .venv/bin/activate` (or preferred venv method).
   3. `uv pip install -r requirements-dev.txt` to get PySide6, pytest, pytest-spec, poethepoet, etc.
-  4. Run the suite with `poe test` (maps to `pytest --spec` via `pyproject.toml`). Tests live under `tests/` and already cover `models.sanitize_targets` and rating heuristics.
+  4. Run the suite with `poe test` (this now shells out to `uv run pytest --spec`). Tests live under `tests/` and already cover `models.sanitize_targets` and rating heuristics.
 - When packaging, rely on GitHub Actions PyInstaller workflow—every push to `main` builds Windows artifacts, tags trigger Windows + macOS outputs.
 
 ## Operational Notes
