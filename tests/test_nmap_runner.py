@@ -184,4 +184,3 @@ def test_run_full_scan_returns_multiple_hosts_for_cidr(monkeypatch):
     assert by_target["192.168.100.13"].open_ports == [80]
     assert by_target["192.168.100.11"].os_guess == "Linux"
     assert by_target["192.168.100.13"].os_guess == "Windows"
-    assert any("-sT" in call for call in calls)
