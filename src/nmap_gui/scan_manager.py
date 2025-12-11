@@ -22,7 +22,7 @@ from .error_codes import (
     build_error,
 )
 from .models import ScanConfig
-from .nmap_runner import run_full_scan
+from .nmap_runner import run_full_scan, run_safe_script_scan
 from .cancel_token import PipeCancelToken, create_pipe_cancel_token
 
 
@@ -156,6 +156,71 @@ class ScanManager(QObject):
             self._thread.quit()
             self._thread.wait(2000)
         self._cleanup_thread()
+
+    def is_running(self) -> bool:
+        return bool(self._thread and self._thread.isRunning())
+
+    def _cleanup_thread(self) -> None:
+        self._worker = None
+        if self._thread:
+            self._thread.deleteLater()
+        self._thread = None
+
+
+class SafeScriptWorker(QObject):
+    result_ready = Signal(object)
+    error = Signal(object)
+    finished = Signal()
+
+    def __init__(self, target: str):
+        super().__init__()
+        self._target = target
+
+    @Slot()
+    def start(self) -> None:
+        try:
+            report = run_safe_script_scan(self._target)
+            self.result_ready.emit(report)
+        except Exception as exc:  # noqa: BLE001
+            self.error.emit(exc)
+        finally:
+            self.finished.emit()
+
+
+class SafeScriptManager(QObject):
+    result_ready = Signal(object)
+    error = Signal(object)
+    started = Signal(str)
+    finished = Signal()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._thread: QThread | None = None
+        self._worker: SafeScriptWorker | None = None
+
+    def start(self, target: str) -> None:
+        if self.is_running():
+            return
+        self._thread = QThread()
+        self._worker = SafeScriptWorker(target)
+        self._worker.moveToThread(self._thread)
+        self._thread.started.connect(self._worker.start)
+        self._worker.result_ready.connect(self.result_ready)
+        self._worker.error.connect(self.error)
+        self._worker.finished.connect(self._thread.quit)
+        self._worker.finished.connect(self.finished)
+        self._thread.finished.connect(self._cleanup_thread)
+        self._thread.start()
+        self.started.emit(target)
+
+    def stop(self) -> None:
+        if self._thread and self._thread.isRunning():
+            self._thread.quit()
+            self._thread.wait(2000)
+        self._cleanup_thread()
+
+    def is_running(self) -> bool:
+        return bool(self._thread and self._thread.isRunning())
 
     def _cleanup_thread(self) -> None:
         self._worker = None

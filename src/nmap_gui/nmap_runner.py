@@ -4,9 +4,11 @@ from __future__ import annotations
 import ipaddress
 import logging
 import os
+import shlex
 import shutil
 import subprocess
 import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
 from typing import Dict, List, Sequence, Set, Tuple
 
 from multiprocessing.synchronize import Event as MpEvent
@@ -18,7 +20,7 @@ from .error_codes import (
     ERROR_SCAN_ABORTED,
     build_error,
 )
-from .models import ErrorRecord, HostScanResult, ScanMode
+from .models import ErrorRecord, HostScanResult, ScanMode, SafeScanReport
 from .rating import apply_rating
 
 LOGGER = logging.getLogger(__name__)
@@ -268,6 +270,57 @@ def run_full_scan(
         errors.append(build_error(ERROR_NMAP_FAILED, detail=str(exc)))
 
     return _finalize()
+
+
+def _format_cli_command(args: Sequence[str]) -> str:
+    return " ".join(shlex.quote(str(part)) for part in args)
+
+
+def run_safe_script_scan(target: str, timeout: int = DEFAULT_TIMEOUT) -> SafeScanReport:
+    started_at = datetime.now(timezone.utc)
+    base_args = ["nmap", "-sV", "--script", "safe", target, "-T4"]
+    stdout = ""
+    stderr = ""
+    exit_code: int | None = None
+    errors: List[ErrorRecord] = []
+    try:
+        ensure_nmap_available()
+        process_args = base_args + ["-oN", "-"]
+        LOGGER.debug("Executing safe script scan: %s", " ".join(process_args))
+        proc = subprocess.run(
+            process_args,
+            check=False,
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+            startupinfo=_WINDOWS_STARTUPINFO,
+            creationflags=_WINDOWS_CREATION_FLAGS,
+        )
+        stdout = proc.stdout
+        stderr = proc.stderr
+        exit_code = proc.returncode
+        if proc.returncode != 0:
+            detail = stderr.strip() or f"nmap exited with status {proc.returncode}"
+            errors.append(build_error(ERROR_NMAP_FAILED, detail=detail))
+    except NmapNotInstalledError:
+        errors.append(build_error(ERROR_NMAP_NOT_FOUND))
+    except subprocess.TimeoutExpired as exc:
+        timeout_value = exc.timeout if getattr(exc, "timeout", None) else DEFAULT_TIMEOUT
+        errors.append(build_error(ERROR_NMAP_TIMEOUT, timeout=timeout_value))
+    except Exception as exc:  # noqa: BLE001
+        errors.append(build_error(ERROR_NMAP_FAILED, detail=str(exc)))
+
+    finished_at = datetime.now(timezone.utc)
+    return SafeScanReport(
+        target=target,
+        command=_format_cli_command(base_args),
+        started_at=started_at,
+        finished_at=finished_at,
+        stdout=stdout,
+        stderr=stderr,
+        exit_code=exit_code,
+        errors=errors,
+    )
 
 
 def _requires_privileged_scan(detail: str | None) -> bool:

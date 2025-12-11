@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
+from datetime import datetime
 from enum import Enum, auto
 from typing import Dict, List, Sequence, Set
 
@@ -60,6 +61,28 @@ class HostScanResult:
         data = asdict(self)
         data["errors"] = [error.to_dict() for error in self.errors]
         return data
+
+
+@dataclass
+class SafeScanReport:
+    """Result payload for an on-demand safe script diagnostic run."""
+
+    target: str
+    command: str
+    started_at: datetime
+    finished_at: datetime
+    stdout: str = ""
+    stderr: str = ""
+    exit_code: int | None = None
+    errors: List[ErrorRecord] = field(default_factory=list)
+
+    @property
+    def duration_seconds(self) -> float:
+        return max((self.finished_at - self.started_at).total_seconds(), 0.0)
+
+    @property
+    def success(self) -> bool:
+        return not self.errors and (self.exit_code == 0)
 
 
 def sanitize_targets(raw_value: str) -> List[str]:
