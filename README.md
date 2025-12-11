@@ -36,6 +36,7 @@ Add `--debug` for verbose logging.
 - Only one safe-script run can execute at a time, and discovery scans must be idle before launching diagnostics to keep total Nmap load predictable.
 - While the diagnostic is active the primary Start/Stop controls and all Safe Script buttons are disabled; the status bar shows which target is currently being evaluated.
 - When the run finishes a modal dialog summarizes the execution context, stdout/stderr, and any structured errors. Use **Save Report** to persist the textual transcript; filenames default to `safe-scan_<target>_<timestamp>.txt` to avoid accidental overwrites.
+- A dedicated progress bar simulates movement based on a 2-minute baseline (matching `-T4`) and automatically stretches if the current session's average runtime exceeds that baseline, so "stuck" scans still show forward progress.
 
 ## Internals
 - `src/nmap_gui/gui.py`: PySide6 widgets and UX wiring

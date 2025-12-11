@@ -5,12 +5,13 @@ import ipaddress
 import os
 import shlex
 import sys
+import time
 from datetime import datetime
 from functools import partial
 from pathlib import Path
 from typing import List, Sequence, Set
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -30,6 +31,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QPlainTextEdit,
+    QProgressBar,
 )
 
 from .exporters import export_csv, export_json
@@ -53,6 +55,10 @@ PRIORITY_COLORS = {
 }
 
 SAFE_SCAN_COLUMN_INDEX = 7
+SAFE_SCAN_DEFAULT_DURATION = 120.0  # seconds
+SAFE_SCAN_HISTORY_LIMIT = 20
+SAFE_PROGRESS_UPDATE_MS = 500
+SAFE_PROGRESS_VISIBILITY_MS = 4000
 
 
 class SafeScanDialog(QDialog):
@@ -182,6 +188,11 @@ class MainWindow(QMainWindow):
         self._safe_scan_active = False
         self._scan_active = False
         self._safe_scan_target: str | None = None
+        self._safe_scan_expected_duration = SAFE_SCAN_DEFAULT_DURATION
+        self._safe_scan_history: List[float] = []
+        self._safe_scan_elapsed_start: float | None = None
+        self._safe_progress_timer = QTimer(self)
+        self._safe_progress_timer.timeout.connect(self._on_safe_progress_tick)
         self._setup_scan_manager()
         self._setup_safe_scan_manager()
         self._build_ui()
@@ -281,6 +292,14 @@ class MainWindow(QMainWindow):
         self.summary_label = QLabel("")
         self.summary_label.setWordWrap(True)
         layout.addWidget(self.summary_label)
+        self.safe_progress_label = QLabel(self._t("safe_scan_progress_idle"))
+        self.safe_progress_bar = QProgressBar()
+        self.safe_progress_bar.setRange(0, 100)
+        self.safe_progress_bar.setValue(0)
+        self.safe_progress_label.setVisible(False)
+        self.safe_progress_bar.setVisible(False)
+        layout.addWidget(self.safe_progress_label)
+        layout.addWidget(self.safe_progress_bar)
         return group
 
     def _create_export_bar(self) -> QHBoxLayout:
@@ -451,6 +470,65 @@ class MainWindow(QMainWindow):
             if isinstance(widget, QPushButton):
                 yield widget
 
+    def _ensure_safe_progress_visible(self) -> None:
+        self.safe_progress_label.setVisible(True)
+        self.safe_progress_bar.setVisible(True)
+
+    def _hide_safe_progress(self) -> None:
+        if self._safe_scan_active:
+            return
+        self.safe_progress_label.setVisible(False)
+        self.safe_progress_bar.setVisible(False)
+
+    def _start_safe_progress(self) -> None:
+        self._safe_scan_elapsed_start = time.monotonic()
+        self.safe_progress_bar.setValue(0)
+        self.safe_progress_bar.setFormat("%p%")
+        self._update_safe_progress_label(0.0)
+        self._ensure_safe_progress_visible()
+        if not self._safe_progress_timer.isActive():
+            self._safe_progress_timer.start(SAFE_PROGRESS_UPDATE_MS)
+
+    def _on_safe_progress_tick(self) -> None:
+        if not self._safe_scan_active or self._safe_scan_elapsed_start is None:
+            return
+        elapsed = time.monotonic() - self._safe_scan_elapsed_start
+        expected = self._safe_scan_expected_duration
+        if expected <= 0:
+            expected = SAFE_SCAN_DEFAULT_DURATION
+        fraction = min((elapsed / expected) * 0.9, 0.9)
+        progress = int(fraction * 100)
+        self.safe_progress_bar.setValue(progress)
+        self._update_safe_progress_label(elapsed)
+
+    def _update_safe_progress_label(self, elapsed_seconds: float) -> None:
+        remaining = max(self._safe_scan_expected_duration - elapsed_seconds, 0)
+        mins, secs = divmod(int(round(remaining)), 60)
+        eta = f"{mins:02d}:{secs:02d}"
+        avg_seconds = max(self._safe_scan_expected_duration, SAFE_SCAN_DEFAULT_DURATION)
+        self.safe_progress_label.setText(
+            self._t("safe_scan_progress_running").format(eta=eta, avg=int(round(avg_seconds)))
+        )
+
+    def _complete_safe_progress(self, duration: float | None) -> None:
+        self._safe_progress_timer.stop()
+        self.safe_progress_bar.setValue(100)
+        if duration is not None:
+            self.safe_progress_label.setText(
+                self._t("safe_scan_progress_complete").format(seconds=int(round(duration)))
+            )
+        else:
+            self.safe_progress_label.setText(self._t("safe_scan_progress_finished"))
+        QTimer.singleShot(SAFE_PROGRESS_VISIBILITY_MS, self._hide_safe_progress)
+        self._safe_scan_elapsed_start = None
+
+    def _record_safe_scan_duration(self, duration: float) -> None:
+        self._safe_scan_history.append(duration)
+        if len(self._safe_scan_history) > SAFE_SCAN_HISTORY_LIMIT:
+            self._safe_scan_history.pop(0)
+        average = sum(self._safe_scan_history) / len(self._safe_scan_history)
+        self._safe_scan_expected_duration = max(SAFE_SCAN_DEFAULT_DURATION, average)
+
     def _handle_sort_request(self, column: int) -> None:
         if self._sort_column == column:
             self._sort_order = (
@@ -495,6 +573,7 @@ class MainWindow(QMainWindow):
             self._t("safe_scan_status_running").format(target=target)
         )
         self._refresh_safe_scan_button_states()
+        self._start_safe_progress()
 
     def _on_safe_scan_result(self, report: SafeScanReport) -> None:
         dialog = SafeScanDialog(self, report, self._language)
@@ -514,17 +593,22 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(message)
 
     def _on_safe_scan_finished(self) -> None:
+        duration: float | None = None
+        if self._safe_scan_elapsed_start is not None:
+            duration = time.monotonic() - self._safe_scan_elapsed_start
         self._safe_scan_active = False
+        target = self._safe_scan_target or ""
         self._safe_scan_target = None
         if not self._scan_active:
             self.start_button.setEnabled(True)
         self.stop_button.setEnabled(self._scan_active)
         if not self._scan_active:
-            finished_message = self._t("safe_scan_status_finished").format(
-                target=self._safe_scan_target or ""
-            )
+            finished_message = self._t("safe_scan_status_finished").format(target=target)
             self.statusBar().showMessage(finished_message)
         self._refresh_safe_scan_button_states()
+        self._complete_safe_progress(duration)
+        if duration is not None:
+            self._record_safe_scan_duration(duration)
 
     def _on_error(self, payload) -> None:
         if isinstance(payload, ErrorRecord):
