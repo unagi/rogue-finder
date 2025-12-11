@@ -5,6 +5,8 @@ import ipaddress
 import os
 import shlex
 import sys
+from datetime import datetime
+from functools import partial
 from pathlib import Path
 from typing import List, Sequence, Set
 
@@ -12,6 +14,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QCheckBox,
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QGridLayout,
     QGroupBox,
@@ -30,8 +34,16 @@ from PySide6.QtWidgets import (
 
 from .exporters import export_csv, export_json
 from .i18n import detect_language, format_error_list, format_error_record, translate
-from .models import ErrorRecord, HostScanResult, ScanConfig, ScanMode, sanitize_targets
-from .scan_manager import ScanManager
+from .models import (
+    ErrorRecord,
+    HostScanResult,
+    SafeScanReport,
+    ScanConfig,
+    ScanMode,
+    sanitize_targets,
+)
+from .scan_manager import SafeScriptManager, ScanManager
+from .utils import slugify_filename_component
 
 
 PRIORITY_COLORS = {
@@ -39,6 +51,109 @@ PRIORITY_COLORS = {
     "Medium": QColor(255, 240, 210),
     "Low": QColor(210, 235, 255),
 }
+
+SAFE_SCAN_COLUMN_INDEX = 7
+
+
+class SafeScanDialog(QDialog):
+    """Modal dialog that shows the safe script report and enables exporting."""
+
+    def __init__(self, parent: QWidget, report: SafeScanReport, language: str):
+        super().__init__(parent)
+        self._report = report
+        self._language = language
+        self.saved_path: str | None = None
+        self._report_text = self._build_report_text()
+        self.setWindowTitle(
+            translate("safe_scan_dialog_title", language).format(target=report.target)
+        )
+        layout = QVBoxLayout(self)
+        self._status_label = QLabel(self._build_status_text())
+        self._status_label.setWordWrap(True)
+        layout.addWidget(self._status_label)
+        self._text_edit = QPlainTextEdit()
+        self._text_edit.setReadOnly(True)
+        self._text_edit.setPlainText(self._report_text)
+        layout.addWidget(self._text_edit)
+        button_box = QDialogButtonBox(QDialogButtonBox.Close)
+        save_button = button_box.addButton(
+            translate("safe_scan_save_button", language),
+            QDialogButtonBox.ActionRole,
+        )
+        save_button.clicked.connect(self._save_report)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+
+    def _build_status_text(self) -> str:
+        status_key = "safe_scan_status_success" if self._report.success else "safe_scan_status_failure"
+        status_value = translate(status_key, self._language)
+        return translate("safe_scan_status_label", self._language).format(status=status_value)
+
+    def _build_report_text(self) -> str:
+        lines: List[str] = []
+        lines.append(f"{self._label('safe_scan_label_target')}: {self._report.target}")
+        lines.append(f"{self._label('safe_scan_label_command')}: {self._report.command}")
+        lines.append(
+            f"{self._label('safe_scan_label_started')}: {self._format_timestamp(self._report.started_at)}"
+        )
+        lines.append(
+            f"{self._label('safe_scan_label_finished')}: {self._format_timestamp(self._report.finished_at)}"
+        )
+        lines.append(
+            f"{self._label('safe_scan_label_duration')}: {self._report.duration_seconds:.1f}s"
+        )
+        exit_code = (
+            str(self._report.exit_code)
+            if self._report.exit_code is not None
+            else self._label("safe_scan_label_none")
+        )
+        lines.append(f"{self._label('safe_scan_label_exit_code')}: {exit_code}")
+        lines.append(f"{self._label('safe_scan_label_errors')}: ")
+        if self._report.errors:
+            for error in self._report.errors:
+                lines.append(f"  - {format_error_record(error, self._language)}")
+        else:
+            lines.append(f"  {self._label('safe_scan_label_none')}")
+        lines.append("")
+        lines.append(f"{self._label('safe_scan_section_stdout')}: ")
+        stdout_text = self._report.stdout.rstrip() or self._label("safe_scan_section_empty")
+        lines.append(stdout_text)
+        lines.append("")
+        lines.append(f"{self._label('safe_scan_section_stderr')}: ")
+        stderr_text = self._report.stderr.rstrip() or self._label("safe_scan_section_empty")
+        lines.append(stderr_text)
+        return "\n".join(lines)
+
+    def _save_report(self) -> None:
+        suggested_name = self._default_filename()
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            self._label("safe_scan_save_dialog"),
+            suggested_name,
+            self._label("safe_scan_save_filter"),
+        )
+        if not path:
+            return
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(self._report_text)
+        self.saved_path = path
+        QMessageBox.information(
+            self,
+            self._label("safe_scan_save_success_title"),
+            self._label("safe_scan_save_success_body").format(path=path),
+        )
+
+    def _default_filename(self) -> str:
+        timestamp = self._report.finished_at.astimezone().strftime("%Y%m%d-%H%M%S")
+        target_slug = slugify_filename_component(self._report.target, fallback="target")
+        return f"safe-scan_{target_slug}_{timestamp}.txt"
+
+    def _label(self, key: str) -> str:
+        return translate(key, self._language)
+
+    def _format_timestamp(self, value: datetime) -> str:
+        local_time = value.astimezone()
+        return local_time.strftime("%Y-%m-%d %H:%M:%S %Z")
 
 
 class MainWindow(QMainWindow):
@@ -56,6 +171,7 @@ class MainWindow(QMainWindow):
         self.resize(1000, 700)
         self._results: List[HostScanResult] = []
         self._scan_manager = ScanManager()
+        self._safe_scan_manager = SafeScriptManager()
         self._sort_column: int | None = None
         self._sort_order = Qt.AscendingOrder
         self.summary_label: QLabel | None = None
@@ -63,7 +179,11 @@ class MainWindow(QMainWindow):
         self._requested_host_estimate = 0
         self._summary_status = self._t("summary_status_idle")
         self._summary_has_error = False
+        self._safe_scan_active = False
+        self._scan_active = False
+        self._safe_scan_target: str | None = None
         self._setup_scan_manager()
+        self._setup_safe_scan_manager()
         self._build_ui()
 
     def _setup_scan_manager(self) -> None:
@@ -72,6 +192,12 @@ class MainWindow(QMainWindow):
         self._scan_manager.result_ready.connect(self._on_result)
         self._scan_manager.error.connect(self._on_error)
         self._scan_manager.finished.connect(self._on_finished)
+
+    def _setup_safe_scan_manager(self) -> None:
+        self._safe_scan_manager.started.connect(self._on_safe_scan_started)
+        self._safe_scan_manager.result_ready.connect(self._on_safe_scan_result)
+        self._safe_scan_manager.error.connect(self._on_safe_scan_error)
+        self._safe_scan_manager.finished.connect(self._on_safe_scan_finished)
 
     def _build_ui(self) -> None:
         central = QWidget()
@@ -125,7 +251,7 @@ class MainWindow(QMainWindow):
         return group
 
     def _create_table(self) -> QWidget:
-        self.table = QTableWidget(0, 7)
+        self.table = QTableWidget(0, 8)
         self.table.setHorizontalHeaderLabels(
             [
                 self._t("table_target"),
@@ -135,6 +261,7 @@ class MainWindow(QMainWindow):
                 self._t("table_score"),
                 self._t("table_priority"),
                 self._t("table_errors"),
+                self._t("table_safe_action"),
             ]
         )
         header = self.table.horizontalHeader()
@@ -233,9 +360,11 @@ class MainWindow(QMainWindow):
         self._update_summary()
         config = ScanConfig(targets=targets, scan_modes=modes)
         self._scan_manager.start(config)
+        self._scan_active = True
         self.start_button.setEnabled(False)
         self.stop_button.setEnabled(True)
         self.statusBar().showMessage(self._t("scanning"))
+        self._refresh_safe_scan_button_states()
 
     def _on_stop_clicked(self) -> None:
         self._scan_manager.stop()
@@ -243,7 +372,9 @@ class MainWindow(QMainWindow):
         self.stop_button.setEnabled(False)
         self.statusBar().showMessage(self._t("scan_stopped"))
         self._summary_status = self._t("scan_stopped")
+        self._scan_active = False
         self._update_summary()
+        self._refresh_safe_scan_button_states()
 
     def _on_scan_started(self, total: int) -> None:
         self.progress_bar.setMaximum(max(total, 1))
@@ -275,6 +406,7 @@ class MainWindow(QMainWindow):
         self.table.setItem(row, 5, priority_item)
         error_text = "\n".join(format_error_list(result.errors, self._language))
         self.table.setItem(row, 6, self._make_item(error_text, Qt.AlignLeft))
+        self._add_safe_scan_button(row, result.target)
         self._apply_row_style(row, result.priority)
         if sorting_enabled:
             self.table.setSortingEnabled(True)
@@ -299,6 +431,26 @@ class MainWindow(QMainWindow):
             if item:
                 item.setBackground(color)
 
+    def _add_safe_scan_button(self, row: int, target: str) -> None:
+        button = QPushButton(self._t("safe_scan_button"))
+        button.clicked.connect(partial(self._on_safe_scan_button_clicked, target))
+        button.setEnabled(self._safe_scan_buttons_enabled())
+        self.table.setCellWidget(row, SAFE_SCAN_COLUMN_INDEX, button)
+
+    def _safe_scan_buttons_enabled(self) -> bool:
+        return (not self._scan_active) and (not self._safe_scan_active)
+
+    def _refresh_safe_scan_button_states(self) -> None:
+        enabled = self._safe_scan_buttons_enabled()
+        for button in self._iter_safe_scan_buttons():
+            button.setEnabled(enabled)
+
+    def _iter_safe_scan_buttons(self):
+        for row in range(self.table.rowCount()):
+            widget = self.table.cellWidget(row, SAFE_SCAN_COLUMN_INDEX)
+            if isinstance(widget, QPushButton):
+                yield widget
+
     def _handle_sort_request(self, column: int) -> None:
         if self._sort_column == column:
             self._sort_order = (
@@ -317,6 +469,63 @@ class MainWindow(QMainWindow):
             self.table.setSortingEnabled(True)
         self.table.sortItems(column, self._sort_order)
 
+    def _on_safe_scan_button_clicked(self, target: str) -> None:
+        if self._scan_active:
+            QMessageBox.information(
+                self,
+                self._t("safe_scan_blocked_title"),
+                self._t("safe_scan_blocked_body"),
+            )
+            return
+        if self._safe_scan_active or self._safe_scan_manager.is_running():
+            QMessageBox.information(
+                self,
+                self._t("safe_scan_running_title"),
+                self._t("safe_scan_running_body"),
+            )
+            return
+        self._safe_scan_manager.start(target)
+
+    def _on_safe_scan_started(self, target: str) -> None:
+        self._safe_scan_active = True
+        self._safe_scan_target = target
+        self.start_button.setEnabled(False)
+        self.stop_button.setEnabled(False)
+        self.statusBar().showMessage(
+            self._t("safe_scan_status_running").format(target=target)
+        )
+        self._refresh_safe_scan_button_states()
+
+    def _on_safe_scan_result(self, report: SafeScanReport) -> None:
+        dialog = SafeScanDialog(self, report, self._language)
+        dialog.exec()
+        if dialog.saved_path:
+            self.statusBar().showMessage(
+                self._t("safe_scan_save_success_body").format(path=dialog.saved_path)
+            )
+
+    def _on_safe_scan_error(self, payload) -> None:
+        message = str(payload)
+        QMessageBox.critical(
+            self,
+            self._t("safe_scan_error_title"),
+            self._t("safe_scan_error_body").format(message=message),
+        )
+        self.statusBar().showMessage(message)
+
+    def _on_safe_scan_finished(self) -> None:
+        self._safe_scan_active = False
+        self._safe_scan_target = None
+        if not self._scan_active:
+            self.start_button.setEnabled(True)
+        self.stop_button.setEnabled(self._scan_active)
+        if not self._scan_active:
+            finished_message = self._t("safe_scan_status_finished").format(
+                target=self._safe_scan_target or ""
+            )
+            self.statusBar().showMessage(finished_message)
+        self._refresh_safe_scan_button_states()
+
     def _on_error(self, payload) -> None:
         if isinstance(payload, ErrorRecord):
             message = format_error_record(payload, self._language)
@@ -329,7 +538,8 @@ class MainWindow(QMainWindow):
         self._update_summary()
 
     def _on_finished(self) -> None:
-        self.start_button.setEnabled(True)
+        self._scan_active = False
+        self.start_button.setEnabled(not self._safe_scan_active)
         self.stop_button.setEnabled(False)
         self.statusBar().showMessage(self._t("scan_finished"))
         if not self._summary_has_error:
@@ -338,12 +548,14 @@ class MainWindow(QMainWindow):
             else:
                 self._summary_status = self._t("summary_status_no_hosts")
         self._update_summary()
+        self._refresh_safe_scan_button_states()
 
     def _t(self, key: str) -> str:
         return translate(key, self._language)
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         self._scan_manager.stop()
+        self._safe_scan_manager.stop()
         super().closeEvent(event)
 
     def _export_csv(self) -> None:

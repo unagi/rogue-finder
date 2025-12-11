@@ -7,6 +7,7 @@ Cross-platform PySide6 desktop application that orchestrates light-weight Nmap d
 - Concurrent scanning via `ProcessPoolExecutor` with cancel support
 - Automatic rating engine aligned with the provided scoring tables
 - Rich table view with inline priority colors plus CSV / JSON export buttons
+- One-click per-target `nmap --script safe` diagnostics with serialized execution and text report export
 
 ## Prerequisites
 1. Python 3.11+
@@ -27,6 +28,14 @@ Add `--debug` for verbose logging.
 3. Click **Start** to launch concurrent scans, **Stop** to cancel
 4. Review results in the table – rows are tinted by priority (High / Medium / Low)
 5. Export via CSV or JSON once results are available
+6. Use the new **Safe Script** action on any discovered host to launch a serialized `nmap --script safe` run; results open in a dedicated dialog where you can review the command/output and save a timestamped text report
+
+### Safe Script Diagnostics
+
+- The diagnostics button appears next to every discovered target once the discovery scan returns results.
+- Only one safe-script run can execute at a time, and discovery scans must be idle before launching diagnostics to keep total Nmap load predictable.
+- While the diagnostic is active the primary Start/Stop controls and all Safe Script buttons are disabled; the status bar shows which target is currently being evaluated.
+- When the run finishes a modal dialog summarizes the execution context, stdout/stderr, and any structured errors. Use **Save Report** to persist the textual transcript; filenames default to `safe-scan_<target>_<timestamp>.txt` to avoid accidental overwrites.
 
 ## Internals
 - `src/nmap_gui/gui.py`: PySide6 widgets and UX wiring
