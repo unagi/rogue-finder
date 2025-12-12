@@ -4,15 +4,8 @@ from __future__ import annotations
 from enum import Enum, auto
 from typing import Callable
 
-from PySide6.QtCore import Signal
-from PySide6.QtWidgets import (
-    QGridLayout,
-    QGroupBox,
-    QLabel,
-    QPushButton,
-    QPlainTextEdit,
-    QProgressBar,
-)
+from PySide6.QtCore import QEvent, Signal
+from PySide6.QtWidgets import QGridLayout, QGroupBox, QLabel, QPushButton, QPlainTextEdit, QSizePolicy
 
 Translator = Callable[[str], str]
 
@@ -24,7 +17,7 @@ class ScanControlsState(Enum):
 
 
 class ScanControlsPanel(QGroupBox):
-    """Target input, action buttons, and progress bar."""
+    """Target input, action buttons, and log controls."""
 
     start_requested = Signal()
     stop_requested = Signal()
@@ -36,6 +29,7 @@ class ScanControlsPanel(QGroupBox):
         super().__init__(translator("scan_settings"), parent)
         self._t = translator
         self._build_ui()
+        self._apply_compact_height()
         self.set_state(ScanControlsState.IDLE)
 
     def _build_ui(self) -> None:
@@ -56,9 +50,6 @@ class ScanControlsPanel(QGroupBox):
         self._stop_button = QPushButton(self._t("stop"))
         self._clear_button = QPushButton(self._t("clear_results_button"))
         self._log_button = QPushButton(self._t("open_log_button"))
-        self._progress_bar = QProgressBar()
-        self._progress_bar.setValue(0)
-
         self._start_button.clicked.connect(self.start_requested)
         self._stop_button.clicked.connect(self.stop_requested)
         self._clear_button.clicked.connect(self.clear_requested)
@@ -68,9 +59,13 @@ class ScanControlsPanel(QGroupBox):
         grid.addWidget(self._stop_button, 2, 1)
         grid.addWidget(self._clear_button, 2, 2)
         grid.addWidget(self._log_button, 2, 3)
-        grid.addWidget(self._progress_bar, 3, 0, 1, 4)
 
         self._log_button.setEnabled(False)
+
+    def event(self, event):  # type: ignore[override]
+        if event.type() in (QEvent.FontChange, QEvent.ApplicationFontChange, QEvent.LayoutRequest):
+            self._update_compact_height()
+        return super().event(event)
 
     def targets_text(self) -> str:
         return self._target_input.toPlainText()
@@ -95,13 +90,16 @@ class ScanControlsPanel(QGroupBox):
     def set_log_enabled(self, enabled: bool) -> None:
         self._log_button.setEnabled(enabled)
 
-    def set_progress(self, done: int, total: int) -> None:
-        self._progress_bar.setMaximum(max(total, 1))
-        self._progress_bar.setValue(max(0, min(done, total)))
-
-    def reset_progress(self, total: int) -> None:
-        self._progress_bar.setMaximum(max(total, 1))
-        self._progress_bar.setValue(0)
-
     def focus_targets(self) -> None:
         self._target_input.setFocus()
+
+    def _apply_compact_height(self) -> None:
+        policy = self.sizePolicy()
+        policy.setVerticalPolicy(QSizePolicy.Fixed)
+        self.setSizePolicy(policy)
+        self._update_compact_height()
+
+    def _update_compact_height(self) -> None:
+        hint = self.sizeHint().height()
+        if hint > 0 and hint != self.maximumHeight():
+            self.setFixedHeight(hint)

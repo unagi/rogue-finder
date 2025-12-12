@@ -22,8 +22,6 @@ EXPORT_FIELDS = [
     "errors",
     "detail_level",
     "detail_updated_at",
-    "diagnostics_status",
-    "diagnostics_updated_at",
 ]
 
 
@@ -54,8 +52,6 @@ def export_csv(
                 "errors": formatted_errors,
                 "detail_level": item.detail_level,
                 "detail_updated_at": item.detail_updated_at or "",
-                "diagnostics_status": item.diagnostics_status,
-                "diagnostics_updated_at": item.diagnostics_updated_at or "",
             }
             writer.writerow(row)
     return output
@@ -74,6 +70,8 @@ def export_json(
     for item in results:
         payload = item.to_dict()
         payload["errors_text"] = format_error_list(item.errors, lang)
+        payload.pop("diagnostics_status", None)
+        payload.pop("diagnostics_updated_at", None)
         serialized.append(payload)
     output.write_text(json.dumps(serialized, indent=2, ensure_ascii=False), encoding="utf-8")
     return output
