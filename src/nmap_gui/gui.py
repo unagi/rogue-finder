@@ -922,7 +922,7 @@ class MainWindow(QMainWindow):
         self._update_row_for_target(target)
 
     def _on_row_checkbox_changed(self, kind: str, target: str, state: int) -> None:
-        checked = state == Qt.Checked
+        checked = Qt.CheckState(state) == Qt.CheckState.Checked
         if kind == "advanced":
             if checked:
                 self._advanced_selection.add(target)
@@ -961,7 +961,7 @@ class MainWindow(QMainWindow):
         self._on_form_state_changed()
 
     def _toggle_all_checkboxes(self, kind: str, state: int) -> None:
-        checked = state == Qt.Checked
+        checked = Qt.CheckState(state) == Qt.CheckState.Checked
         if not self._row_checkboxes:
             return
         targets = list(self._row_checkboxes.keys())

@@ -19,7 +19,7 @@ CONFIG_FILENAME = "rogue-finder.config.yaml"
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "version": 1,
     "scan": {
-        "default_timeout_seconds": 180,
+        "default_timeout_seconds": 300,
         "fast_port_scan_list": [
             21,
             22,
@@ -54,7 +54,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
             50000,
         ],
         "high_port_minimum": 50000,
-        "advanced_timeout_seconds": 420,
+        "advanced_timeout_seconds": 600,
         "advanced_max_parallel": 4,
     },
     "rating": {
@@ -111,11 +111,11 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
         }
     },
     "safe_scan": {
-        "default_duration_seconds": 120.0,
+        "default_duration_seconds": 600.0,
         "history_limit": 20,
         "progress_update_ms": 500,
         "progress_visibility_ms": 4000,
-        "timeout_seconds": 180,
+        "timeout_seconds": 900,
         "max_parallel": 2,
     },
 }

@@ -7,7 +7,8 @@ Cross-platform PySide6 desktop application that orchestrates light-weight Nmap d
 - Concurrent scanning via `ProcessPoolExecutor` with cancel support
 - Automatic rating engine aligned with the provided scoring tables
 - Rich table view with inline priority colors plus CSV / JSON export buttons
-- One-click per-target `nmap --script safe` diagnostics with serialized execution and text report export
+- One-click per-target `nmap --script safe` diagnostics with bounded concurrency (default 2) and text report export
+- Detailed mapping between GUI actions and the exact `nmap` commands they invoke lives in [docs/scan_execution.md](docs/scan_execution.md).
 
 ## Prerequisites
 1. Python 3.11+
@@ -49,10 +50,10 @@ python -m nmap_gui.config --write-default ./rogue-finder.config.yaml
 ### Safe Script Diagnostics
 
 - The diagnostics button appears next to every discovered target once the discovery scan returns results.
-- Only one safe-script run can execute at a time, and discovery scans must be idle before launching diagnostics to keep total Nmap load predictable.
+- Safe-script runs observe the `safe_scan.max_parallel` limit (default 2) so you can process a small batch concurrently without overwhelming the host; discovery scans must be idle before launching diagnostics.
 - While the diagnostic is active the primary Start/Stop controls and all Safe Script buttons are disabled; the status bar shows which target is currently being evaluated.
 - When the run finishes a modal dialog summarizes the execution context, stdout/stderr, and any structured errors. Use **Save Report** to persist the textual transcript; filenames default to `safe-scan_<target>_<timestamp>.txt` to avoid accidental overwrites.
-- A dedicated progress bar simulates movement based on a 2-minute baseline (matching `-T4`) and automatically stretches if the current session's average runtime exceeds that baseline, so "stuck" scans still show forward progress.
+- A dedicated progress bar simulates movement based on a 10-minute baseline (matching `safe_scan.default_duration_seconds`) and automatically stretches if the session's average runtime exceeds that baseline, so "stuck" scans still show forward progress.
 
 ## Internals
 - `src/nmap_gui/gui.py`: PySide6 widgets and UX wiring

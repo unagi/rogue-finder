@@ -11,6 +11,7 @@
 - `MainWindow` (`src/nmap_gui/gui.py`) owns the PySide6 widgets, collects targets/scopes, and emits `ScanConfig` objects.
 - `ScanManager`/`ScanWorker` (`src/nmap_gui/scan_manager.py`) bridge the GUI thread to multiprocessing. Each scan runs in a `ProcessPoolExecutor` using the `spawn` context so Windows builds work. Cancellation toggles a shared event checked between phases.
 - `run_full_scan` (`src/nmap_gui/nmap_runner.py`) executes up to three phases (ICMP `-sn -PE`, targeted TCP SYN `-sS` against `PORT_SCAN_LIST`, OS fingerprint `-O -Pn`). On macOS without root privileges the runner automatically downgrades to TCP ping (`-PA`) and TCP connect (`-sT`) scans and skips OS fingerprinting to avoid raw-socket failures. Each phase parses XML output to populate `HostScanResult` and then hands it to the rating engine.
+- See `docs/scan_execution.md` for a mode-by-mode breakdown of how GUI actions map to concrete `nmap` commands (fast, advanced, and safe-script diagnostics).
 - Export buttons call `exporters.export_csv/json` to produce UTF-8 CSV/JSON files. Score breakdowns get JSON-dumped so analysts can trace how a score was formed.
 
 ## Rating System Essentials
