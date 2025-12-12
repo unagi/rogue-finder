@@ -353,6 +353,7 @@ def run_full_scan(
                 raise NmapExecutionError(f"Failed to parse port scan XML: {exc}") from exc
             for host_key, ports in port_map.items():
                 host_result = _ensure_host(host_key)
+                host_result.is_alive = True
                 host_result.open_ports = ports
                 host_result.high_ports = [p for p in ports if p >= scan_settings.high_port_minimum]
         if cancel_event and cancel_event.is_set():
@@ -376,6 +377,7 @@ def run_full_scan(
                 raise NmapExecutionError(f"Failed to parse OS detection XML: {exc}") from exc
             for host_key, (guess, accuracy) in os_map.items():
                 host_result = _ensure_host(host_key)
+                host_result.is_alive = True
                 host_result.os_guess = guess
                 host_result.os_accuracy = accuracy
         if cancel_event and cancel_event.is_set():

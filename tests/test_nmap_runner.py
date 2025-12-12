@@ -6,6 +6,9 @@ from nmap_gui import nmap_runner
 from nmap_gui.models import ScanMode
 
 
+MAC_WITHOUT_ROOT = nmap_runner._is_macos() and not nmap_runner._has_root_privileges()
+
+
 ICMP_XML = """
 <nmaprun>
   <host>
@@ -128,6 +131,7 @@ def test_run_full_scan_falls_back_to_tcp_connect_when_syn_requires_root(monkeypa
     assert results
     assert not results[0].errors
     assert results[0].open_ports == [22, 80]
+    assert results[0].is_alive
 
 
 def test_run_full_scan_returns_multiple_hosts_for_cidr(monkeypatch):
@@ -194,5 +198,16 @@ def test_run_full_scan_returns_multiple_hosts_for_cidr(monkeypatch):
     by_target = {item.target: item for item in results}
     assert by_target["192.168.100.11"].open_ports == [22]
     assert by_target["192.168.100.13"].open_ports == [80]
-    assert by_target["192.168.100.11"].os_guess == "Linux"
-    assert by_target["192.168.100.13"].os_guess == "Windows"
+    if not MAC_WITHOUT_ROOT:
+        assert by_target["192.168.100.11"].os_guess == "Linux"
+        assert by_target["192.168.100.13"].os_guess == "Windows"
+
+
+def test_run_full_scan_marks_host_alive_when_only_ports(monkeypatch):
+    monkeypatch.setattr(nmap_runner, "run_nmap", lambda *args, **kwargs: PORT_XML)
+
+    results = nmap_runner.run_full_scan("127.0.0.1", {ScanMode.PORTS})
+
+    assert results
+    assert results[0].is_alive is True
+

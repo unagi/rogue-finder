@@ -426,6 +426,11 @@ class MainWindow(QMainWindow):
         self._safe_scan_batch_expected_duration = 0.0
         self._safe_scan_completed = 0
         self._safe_scan_parallel = max(1, self._settings.safe_scan.max_parallel)
+        self._advanced_eta_timer = QTimer(self)
+        self._advanced_eta_timer.setInterval(1000)
+        self._advanced_eta_timer.timeout.connect(self._on_advanced_eta_tick)
+        self._advanced_eta_started_at: float | None = None
+        self._advanced_eta_expected_seconds = 0.0
         self._safe_progress_timer = QTimer(self)
         self._safe_progress_timer.timeout.connect(self._on_safe_progress_tick)
         self._state_save_timer = QTimer(self)
@@ -773,6 +778,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(self._t("scan_stopped"))
         self._summary_status = self._t("scan_stopped")
         self._scan_active = False
+        self._stop_advanced_eta_timer()
         self._update_summary()
         self._refresh_action_buttons()
         if self._log_dialog:
@@ -1157,16 +1163,52 @@ class MainWindow(QMainWindow):
             self._insert_row_for_result(result)
 
     def _announce_advanced_eta(self, target_count: int) -> None:
-        eta_seconds = self._estimate_parallel_total_seconds(
+        if target_count <= 0:
+            self._stop_advanced_eta_timer()
+            return
+        expected = self._estimate_parallel_total_seconds(
             target_count,
             float(self._settings.scan.advanced_timeout_seconds),
             timeout_seconds=float(self._settings.scan.advanced_timeout_seconds),
             parallelism=self._settings.scan.advanced_max_parallel,
         )
-        eta_text = self._format_eta_seconds(eta_seconds)
-        message = self._t("advanced_running_status_eta").format(eta=eta_text)
+        self._summary_status = self._t("advanced_running_status")
+        self._update_summary()
+        self._start_advanced_eta_timer(expected)
+
+    def _start_advanced_eta_timer(self, expected_seconds: float) -> None:
+        self._advanced_eta_started_at = time.monotonic()
+        self._advanced_eta_expected_seconds = max(expected_seconds, 0.0)
+        if self._advanced_eta_expected_seconds <= 0:
+            self._stop_advanced_eta_timer()
+            return
+        self._update_advanced_eta_status()
+        if not self._advanced_eta_timer.isActive():
+            self._advanced_eta_timer.start()
+
+    def _stop_advanced_eta_timer(self) -> None:
+        if self._advanced_eta_timer.isActive():
+            self._advanced_eta_timer.stop()
+        self._advanced_eta_started_at = None
+        self._advanced_eta_expected_seconds = 0.0
+
+    def _on_advanced_eta_tick(self) -> None:
+        if self._advanced_eta_started_at is None:
+            self._stop_advanced_eta_timer()
+            return
+        elapsed = time.monotonic() - self._advanced_eta_started_at
+        remaining = max(self._advanced_eta_expected_seconds - elapsed, 0.0)
+        self._update_advanced_eta_status(remaining)
+        if remaining <= 0:
+            self._stop_advanced_eta_timer()
+
+    def _update_advanced_eta_status(self, remaining: float | None = None) -> None:
+        if remaining is None:
+            message = self._t("advanced_running_status")
+        else:
+            eta_text = self._format_eta_seconds(remaining)
+            message = self._t("advanced_running_status_eta").format(eta=eta_text)
         self.statusBar().showMessage(message)
-        self._summary_status = message
     def _build_advanced_config(self, targets: Sequence[str], *, include_os: bool) -> ScanConfig:
         modes: Set[ScanMode] = {ScanMode.PORTS}
         if include_os:
@@ -1194,6 +1236,14 @@ class MainWindow(QMainWindow):
         if color_hex:
             return QColor(color_hex)
         return DEFAULT_PRIORITY_COLORS.get(priority)
+
+    def _format_eta_seconds(self, seconds: float) -> str:
+        total = max(int(round(seconds)), 0)
+        mins, secs = divmod(total, 60)
+        hours, mins = divmod(mins, 60)
+        if hours:
+            return f"{hours:d}:{mins:02d}:{secs:02d}"
+        return f"{mins:02d}:{secs:02d}"
 
     def _estimate_parallel_total_seconds(
         self,
@@ -1397,6 +1447,7 @@ class MainWindow(QMainWindow):
         self._summary_has_error = True
         self._summary_status = message
         self._update_summary()
+        self._stop_advanced_eta_timer()
         if self._log_dialog:
             self._log_dialog.mark_scan_finished()
 
@@ -1412,6 +1463,7 @@ class MainWindow(QMainWindow):
             self._update_summary()
             self._scan_manager.start(next_config)
             return
+        self._stop_advanced_eta_timer()
         self._scan_active = False
         self._pending_scan_configs.clear()
         self._active_scan_kind = None
