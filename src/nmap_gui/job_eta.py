@@ -14,7 +14,7 @@ class JobEtaController(QObject):
         self,
         parent: QObject,
         status_callback: Callable[[str], None],
-        summary_callback: Callable[[str], None],
+        summary_callback: Callable[[str], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self._status_callback = status_callback
@@ -88,4 +88,5 @@ class JobEtaController(QObject):
         if not message:
             return
         self._status_callback(message)
-        self._summary_callback(message)
+        if self._summary_callback:
+            self._summary_callback(message)

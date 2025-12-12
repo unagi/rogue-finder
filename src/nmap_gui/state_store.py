@@ -16,7 +16,7 @@ from .storage_warnings import record_storage_warning
 LOGGER = logging.getLogger(__name__)
 
 STATE_FILENAME = "rogue-finder.state.bin"
-CURRENT_STATE_VERSION = 2
+CURRENT_STATE_VERSION = 3
 
 
 @dataclass
@@ -31,7 +31,6 @@ class AppState:
     window_geometry: bytes | None = None
     results: List[HostScanResult] = field(default_factory=list)
     advanced_selected: Set[str] = field(default_factory=set)
-    os_selected: Set[str] = field(default_factory=set)
     safety_selected: Set[str] = field(default_factory=set)
 
 
@@ -106,7 +105,6 @@ def _coerce_state(payload: object) -> AppState | None:
             window_geometry=getattr(payload, "window_geometry", None),
             results=list(getattr(payload, "results", [])),
             advanced_selected=set(getattr(payload, "advanced_selected", set())),
-            os_selected=set(getattr(payload, "os_selected", set())),
             safety_selected=set(getattr(payload, "safety_selected", set())),
         )
     if isinstance(payload, dict):
@@ -119,7 +117,6 @@ def _coerce_state(payload: object) -> AppState | None:
             "window_geometry": payload.get("window_geometry"),
             "results": payload.get("results", []),
             "advanced_selected": set(payload.get("advanced_selected", [])),
-            "os_selected": set(payload.get("os_selected", [])),
             "safety_selected": set(payload.get("safety_selected", [])),
         }
         try:
