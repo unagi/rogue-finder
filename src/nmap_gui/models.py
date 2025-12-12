@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum, auto
 from typing import Dict, List, Sequence, Set
 
@@ -21,6 +21,17 @@ class ScanConfig:
 
     targets: Sequence[str]
     scan_modes: Set[ScanMode]
+
+
+@dataclass
+class ScanLogEvent:
+    """Structured log line emitted while an nmap phase is running."""
+
+    target: str
+    phase: ScanMode | None
+    stream: str
+    line: str
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 @dataclass
 class ErrorRecord:
