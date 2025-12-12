@@ -529,13 +529,11 @@ class MainWindow(QMainWindow):
         bar = QHBoxLayout()
         bar.addWidget(QLabel(self._t("advanced_select_label")))
         self.advanced_select_all_checkbox = QCheckBox(self._t("select_all"))
-        self.advanced_select_all_checkbox.setTristate(True)
         self.advanced_select_all_checkbox.stateChanged.connect(
             lambda state: self._toggle_all_checkboxes("advanced", state)
         )
         bar.addWidget(self.advanced_select_all_checkbox)
         self.os_select_all_checkbox = QCheckBox(self._t("select_all_os"))
-        self.os_select_all_checkbox.setTristate(True)
         self.os_select_all_checkbox.stateChanged.connect(
             lambda state: self._toggle_all_checkboxes("os", state)
         )
@@ -546,7 +544,6 @@ class MainWindow(QMainWindow):
         bar.addSpacing(20)
         bar.addWidget(QLabel(self._t("safety_select_label")))
         self.safety_select_all_checkbox = QCheckBox(self._t("select_all"))
-        self.safety_select_all_checkbox.setTristate(True)
         self.safety_select_all_checkbox.stateChanged.connect(
             lambda state: self._toggle_all_checkboxes("safety", state)
         )
@@ -964,8 +961,6 @@ class MainWindow(QMainWindow):
         self._on_form_state_changed()
 
     def _toggle_all_checkboxes(self, kind: str, state: int) -> None:
-        if state == Qt.PartiallyChecked:
-            return
         checked = state == Qt.Checked
         if not self._row_checkboxes:
             return
@@ -997,12 +992,7 @@ class MainWindow(QMainWindow):
         if checkbox is None:
             return
         checkbox.blockSignals(True)
-        if total <= 0 or selected <= 0:
-            checkbox.setCheckState(Qt.Unchecked)
-        elif selected == total:
-            checkbox.setCheckState(Qt.Checked)
-        else:
-            checkbox.setCheckState(Qt.PartiallyChecked)
+        checkbox.setCheckState(Qt.Checked if total > 0 and selected == total else Qt.Unchecked)
         checkbox.blockSignals(False)
 
     def _rebuild_row_index_from_table(self) -> None:
