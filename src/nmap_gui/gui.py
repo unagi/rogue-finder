@@ -182,7 +182,6 @@ class ScanLogDialog(QDialog):
         self._current_target: str | None = None
         self.setWindowTitle(translate("log_dialog_title", language))
         self.setModal(False)
-        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self.setMinimumSize(760, 420)
         self._build_ui()
 
@@ -363,6 +362,11 @@ class ScanLogDialog(QDialog):
     def _t(self, key: str) -> str:
         return translate(key, self._language)
 
+    def closeEvent(self, event) -> None:  # type: ignore[override]
+        """Hide instead of destroying so MainWindow can re-open the dialog."""
+        event.ignore()
+        self.hide()
+
 
 class MainWindow(QMainWindow):
     """Primary top-level window."""
@@ -393,6 +397,7 @@ class MainWindow(QMainWindow):
         self.safety_select_all_checkbox: QCheckBox | None = None
         self.run_advanced_button: QPushButton | None = None
         self.run_safety_button: QPushButton | None = None
+        self.log_button: QPushButton | None = None
         self._scan_manager = ScanManager(self._settings)
         self._safe_scan_manager = SafeScriptManager(self._settings)
         self._sort_column: int | None = None
@@ -411,7 +416,6 @@ class MainWindow(QMainWindow):
         self._safe_scan_batch_total = 0
         self._safe_scan_batch_expected_duration = self._safe_scan_expected_duration
         self._safe_scan_completed = 0
-        self._mac_warning_shown = False
         self._safe_progress_timer = QTimer(self)
         self._safe_progress_timer.timeout.connect(self._on_safe_progress_tick)
         self._state_save_timer = QTimer(self)
@@ -425,7 +429,7 @@ class MainWindow(QMainWindow):
         self._setup_safe_scan_manager()
         self._build_ui()
         self._apply_state_to_widgets()
-        self._maybe_show_macos_warning()
+        self._update_mac_limited_label()
         self._connect_state_change_signals()
         if not self._prompt_storage_warnings():
             QTimer.singleShot(0, self.close)
@@ -475,16 +479,20 @@ class MainWindow(QMainWindow):
         self.stop_button = QPushButton(self._t("stop"))
         self.stop_button.setEnabled(False)
         self.clear_button = QPushButton(self._t("clear_results_button"))
+        self.log_button = QPushButton(self._t("open_log_button"))
+        self.log_button.setEnabled(False)
         self.progress_bar = QProgressBar()
         self.progress_bar.setValue(0)
 
         self.start_button.clicked.connect(self._on_start_clicked)
         self.stop_button.clicked.connect(self._on_stop_clicked)
         self.clear_button.clicked.connect(self._on_clear_results)
+        self.log_button.clicked.connect(self._on_show_log_clicked)
 
         grid.addWidget(self.start_button, 2, 0)
         grid.addWidget(self.stop_button, 2, 1)
         grid.addWidget(self.clear_button, 2, 2)
+        grid.addWidget(self.log_button, 2, 3)
         grid.addWidget(self.progress_bar, 3, 0, 1, 4)
 
         return group
@@ -521,11 +529,13 @@ class MainWindow(QMainWindow):
         bar = QHBoxLayout()
         bar.addWidget(QLabel(self._t("advanced_select_label")))
         self.advanced_select_all_checkbox = QCheckBox(self._t("select_all"))
+        self.advanced_select_all_checkbox.setTristate(True)
         self.advanced_select_all_checkbox.stateChanged.connect(
             lambda state: self._toggle_all_checkboxes("advanced", state)
         )
         bar.addWidget(self.advanced_select_all_checkbox)
         self.os_select_all_checkbox = QCheckBox(self._t("select_all_os"))
+        self.os_select_all_checkbox.setTristate(True)
         self.os_select_all_checkbox.stateChanged.connect(
             lambda state: self._toggle_all_checkboxes("os", state)
         )
@@ -536,6 +546,7 @@ class MainWindow(QMainWindow):
         bar.addSpacing(20)
         bar.addWidget(QLabel(self._t("safety_select_label")))
         self.safety_select_all_checkbox = QCheckBox(self._t("select_all"))
+        self.safety_select_all_checkbox.setTristate(True)
         self.safety_select_all_checkbox.stateChanged.connect(
             lambda state: self._toggle_all_checkboxes("safety", state)
         )
@@ -552,6 +563,13 @@ class MainWindow(QMainWindow):
         self.summary_label = QLabel("")
         self.summary_label.setWordWrap(True)
         layout.addWidget(self.summary_label)
+        self.mac_limited_label = QLabel("")
+        self.mac_limited_label.setWordWrap(True)
+        font = self.mac_limited_label.font()
+        font.setItalic(True)
+        self.mac_limited_label.setFont(font)
+        self.mac_limited_label.setVisible(False)
+        layout.addWidget(self.mac_limited_label)
         self.safe_progress_label = QLabel(self._t("safe_scan_progress_idle"))
         self.safe_progress_bar = QProgressBar()
         self.safe_progress_bar.setRange(0, 100)
@@ -625,7 +643,7 @@ class MainWindow(QMainWindow):
         self._pending_scan_configs = []
         self._active_scan_kind = "fast"
         self._current_scan_targets = list(targets)
-        self._ensure_log_dialog(targets)
+        self._ensure_log_dialog(targets, show=False, reset=True)
         self._scan_manager.start(config)
         self._scan_active = True
         self.start_button.setEnabled(False)
@@ -698,7 +716,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(self._t("advanced_running_status"))
         self._summary_status = self._t("advanced_running_status")
         self._update_summary()
-        self._ensure_log_dialog(first.targets)
+        self._ensure_log_dialog(first.targets, show=False, reset=True)
         self._scan_manager.start(first)
         self._refresh_action_buttons()
 
@@ -729,6 +747,13 @@ class MainWindow(QMainWindow):
             self._set_diagnostics_status(target, "running")
         self._safe_scan_manager.start(targets)
         self._refresh_action_buttons()
+
+    def _on_show_log_clicked(self) -> None:
+        if not self._log_dialog:
+            return
+        self._log_dialog.show()
+        self._log_dialog.raise_()
+        self._log_dialog.activateWindow()
 
     def _on_stop_clicked(self) -> None:
         self._scan_manager.stop()
@@ -779,6 +804,8 @@ class MainWindow(QMainWindow):
         self._safety_selection.clear()
         self.table.setRowCount(0)
         self._sync_select_all_checkboxes()
+        self._update_mac_limited_label()
+        self._update_select_all_enabled()
 
     def _insert_row_for_result(
         self,
@@ -794,6 +821,7 @@ class MainWindow(QMainWindow):
         self._populate_row(row, result)
         self._attach_row_checkboxes(row, result.target)
         self._result_index[result.target] = row
+        self._update_select_all_enabled()
         if sorting_enabled:
             self.table.setSortingEnabled(True)
             if allow_sort_restore and self._sort_column is not None:
@@ -830,7 +858,10 @@ class MainWindow(QMainWindow):
 
         os_cb = QCheckBox()
         os_cb.setChecked(target in self._os_selection)
-        os_cb.setEnabled(target in self._advanced_selection)
+        os_allowed = self._is_os_selection_allowed()
+        os_cb.setEnabled(os_allowed and target in self._advanced_selection)
+        if not os_allowed:
+            os_cb.setToolTip(self._t("mac_limited_body"))
         os_cb.stateChanged.connect(
             lambda state, t=target: self._on_row_checkbox_changed("os", t, state)
         )
@@ -900,7 +931,7 @@ class MainWindow(QMainWindow):
                 self._advanced_selection.add(target)
                 checkbox = self._row_checkboxes.get(target, {}).get("os")
                 if checkbox:
-                    checkbox.setEnabled(True)
+                    checkbox.setEnabled(self._is_os_selection_allowed())
             else:
                 self._advanced_selection.discard(target)
                 self._os_selection.discard(target)
@@ -910,6 +941,7 @@ class MainWindow(QMainWindow):
                     checkbox.setChecked(False)
                     checkbox.setEnabled(False)
                     checkbox.blockSignals(False)
+            self._refresh_os_checkbox_states()
         elif kind == "os":
             if target not in self._advanced_selection:
                 checkbox = self._row_checkboxes.get(target, {}).get("os")
@@ -932,6 +964,8 @@ class MainWindow(QMainWindow):
         self._on_form_state_changed()
 
     def _toggle_all_checkboxes(self, kind: str, state: int) -> None:
+        if state == Qt.PartiallyChecked:
+            return
         checked = state == Qt.Checked
         if not self._row_checkboxes:
             return
@@ -1041,15 +1075,18 @@ class MainWindow(QMainWindow):
         self._update_summary()
         return True
 
-    def _maybe_show_macos_warning(self) -> None:
-        if self._mac_warning_shown or not self._is_macos_limited():
+    def _update_mac_limited_label(self) -> None:
+        if not hasattr(self, "mac_limited_label"):
             return
-        QMessageBox.warning(
-            self,
-            self._t("mac_limited_title"),
-            self._t("mac_limited_body"),
-        )
-        self._mac_warning_shown = True
+        if self._is_macos_limited():
+            self.mac_limited_label.setText(self._t("mac_limited_body"))
+            self.mac_limited_label.setVisible(True)
+        else:
+            self.mac_limited_label.clear()
+            self.mac_limited_label.setVisible(False)
+        self._update_os_select_all_enabled()
+        self._refresh_os_checkbox_states()
+        self._sync_select_all_checkboxes()
 
     def _is_macos_limited(self) -> bool:
         return sys.platform == "darwin" and not self._running_as_root()
@@ -1059,6 +1096,40 @@ class MainWindow(QMainWindow):
         if callable(geteuid):
             return geteuid() == 0
         return True
+
+    def _is_os_selection_allowed(self) -> bool:
+        return not self._is_macos_limited()
+
+    def _update_select_all_enabled(self) -> None:
+        has_rows = bool(self._row_checkboxes)
+        if self.advanced_select_all_checkbox:
+            self.advanced_select_all_checkbox.setEnabled(has_rows)
+        if self.safety_select_all_checkbox:
+            self.safety_select_all_checkbox.setEnabled(has_rows)
+        self._update_os_select_all_enabled()
+
+    def _update_os_select_all_enabled(self) -> None:
+        if not self.os_select_all_checkbox:
+            return
+        allowed = self._is_os_selection_allowed()
+        has_rows = bool(self._row_checkboxes)
+        self.os_select_all_checkbox.setEnabled(allowed and has_rows)
+        if not allowed:
+            self.os_select_all_checkbox.setCheckState(Qt.Unchecked)
+
+    def _refresh_os_checkbox_states(self) -> None:
+        allowed = self._is_os_selection_allowed()
+        for target, widgets in self._row_checkboxes.items():
+            os_cb = widgets.get("os")
+            if not os_cb:
+                continue
+            enable = allowed and (target in self._advanced_selection)
+            os_cb.setEnabled(enable)
+            if not enable and os_cb.isChecked():
+                os_cb.blockSignals(True)
+                os_cb.setChecked(False)
+                os_cb.blockSignals(False)
+                self._os_selection.discard(target)
 
     def _handle_fast_result(self, result: HostScanResult) -> None:
         if self._consume_placeholder_error(result):
@@ -1285,7 +1356,7 @@ class MainWindow(QMainWindow):
             next_config = self._pending_scan_configs.pop(0)
             self._current_scan_targets = list(next_config.targets)
             self.statusBar().showMessage(self._t("advanced_running_status"))
-            self._ensure_log_dialog(next_config.targets)
+            self._ensure_log_dialog(next_config.targets, show=False, reset=True)
             self._summary_status = self._t("advanced_running_status")
             self._update_summary()
             self._scan_manager.start(next_config)
@@ -1314,7 +1385,10 @@ class MainWindow(QMainWindow):
         self._scan_manager.stop()
         self._safe_scan_manager.stop()
         if self._log_dialog:
-            self._log_dialog.close()
+            self._log_dialog.deleteLater()
+            self._log_dialog = None
+        if self.log_button:
+            self.log_button.setEnabled(False)
         self._state_save_timer.stop()
         if not self._persist_state(on_close=True):
             event.ignore()
@@ -1502,19 +1576,25 @@ class MainWindow(QMainWindow):
         python_path = shlex.quote(str(Path(python).resolve()))
         return f"sudo {python_path} -m nmap_gui.main --debug"
 
-    def _ensure_log_dialog(self, targets: Sequence[str]) -> None:
+    def _ensure_log_dialog(self, targets: Sequence[str], *, show: bool, reset: bool = True) -> None:
         if self._log_dialog is None:
             self._log_dialog = ScanLogDialog(self, self._language)
             self._log_dialog.destroyed.connect(self._on_log_dialog_destroyed)
-        else:
+        if reset:
             self._log_dialog.reset()
-        self._log_dialog.set_initial_targets(targets)
-        self._log_dialog.show()
-        self._log_dialog.raise_()
-        self._log_dialog.activateWindow()
+        if targets:
+            self._log_dialog.set_initial_targets(targets)
+        if show:
+            self._log_dialog.show()
+            self._log_dialog.raise_()
+            self._log_dialog.activateWindow()
+        if self.log_button:
+            self.log_button.setEnabled(True)
 
     def _on_log_dialog_destroyed(self, _obj=None) -> None:
         self._log_dialog = None
+        if self.log_button:
+            self.log_button.setEnabled(False)
 
     def _on_log_event(self, event: ScanLogEvent) -> None:
         if not isinstance(event, ScanLogEvent):
