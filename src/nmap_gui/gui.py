@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Sequence, Set
 
-from PySide6.QtCore import QByteArray, Qt, QTimer
+from PySide6.QtCore import QByteArray, QTimer
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
