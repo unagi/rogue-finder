@@ -32,6 +32,7 @@
   5. Run `poe lint` (backs `ruff check src tests`) before committing to keep packaging imports and style consistent.
 - Pull requests automatically run `poe lint` and `poe test` via `.github/workflows/pr-ci.yml`. Keep those tasks green before requesting review.
 - When packaging, rely on GitHub Actions PyInstaller workflow—every push to `main` builds Windows artifacts, tags trigger Windows + macOS outputs.
+- Tag pushes also kick off `.github/workflows/tag-changelog.yml`: the job runs `git-cliff` with `cliff.toml`, rewrites `CHANGELOG.md`, and opens a PR named `docs: update changelog for <tag>` so `main` always contains the latest release notes. Avoid hand-editing the changelog; regenerate locally via `git cliff -c cliff.toml -o CHANGELOG.md` if you need to preview.
 
 ## Operational Notes
 - Users must install Nmap separately (README lists OS-specific commands). If `run_full_scan` can’t find Nmap it records the error in `HostScanResult.errors` so the GUI can surface it.
