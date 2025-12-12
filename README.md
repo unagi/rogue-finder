@@ -54,6 +54,7 @@ python -m nmap_gui.config --write-default ./rogue-finder.config.yaml
 - While the diagnostic is active the primary Start/Stop controls and all Safe Script buttons are disabled; the status bar shows which target is currently being evaluated.
 - When the run finishes a modal dialog summarizes the execution context, stdout/stderr, and any structured errors. Use **Save Report** to persist the textual transcript; filenames default to `safe-scan_<target>_<timestamp>.txt` to avoid accidental overwrites.
 - A dedicated progress bar simulates movement based on a 10-minute baseline (matching `safe_scan.default_duration_seconds`) and automatically stretches if the session's average runtime exceeds that baseline, so "stuck" scans still show forward progress.
+- The ETA shown for both advanced discovery and Safe Script now factors in (a) how many hosts are queued, (b) each phase's worker parallelism, and (c) the per-host timeout. The first batch assumes the full timeout to avoid over-promising, then shortens future estimates using the observed runtimes recorded in the session history.
 
 ## Internals
 - `src/nmap_gui/gui.py`: PySide6 widgets and UX wiring
@@ -83,6 +84,17 @@ The project standardizes on the [uv](https://docs.astral.sh/uv/) toolchain for f
   poe test
   ```
   (Poe shells out to `uv run pytest --spec` per `pyproject.toml`.)
+
+### Optional CLI helpers for AI/Desktop automation
+If you frequently drive AI agents or non-interactive shells, installing a few lightweight CLI tools can drastically cut down on `curl` + `grep` loops:
+
+- `lynx` or `w3m` – dump HTML pages as plain text so you can `rg` through documentation without a browser.
+- `htmlq` or `pup` – CSS-selector extractors; perfect for grabbing specific DOM nodes from fetched HTML.
+- `jq` – indispensable for slicing JSON APIs or GitHub responses.
+- `ddgr` (DuckDuckGo CLI) – run web searches directly from the terminal and open results without context switching.
+- `gh` – GitHub’s official CLI for searching issues/PRs and opening them in the browser with one command.
+
+Keeping these in your toolbox makes “ask the web → gather context → continue coding” loops much faster when working purely from the terminal.
 
 ## Continuous Integration
 - GitHub Actions now bundles the app with PyInstaller.

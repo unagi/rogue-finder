@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import ipaddress
+import math
 import os
 import shlex
 import sys
@@ -362,6 +363,14 @@ class ScanLogDialog(QDialog):
     def _t(self, key: str) -> str:
         return translate(key, self._language)
 
+    def _format_eta_seconds(self, seconds: float) -> str:
+        total = max(int(round(seconds)), 0)
+        mins, secs = divmod(total, 60)
+        hours, mins = divmod(mins, 60)
+        if hours:
+            return f"{hours:d}:{mins:02d}:{secs:02d}"
+        return f"{mins:02d}:{secs:02d}"
+
     def closeEvent(self, event) -> None:  # type: ignore[override]
         """Hide instead of destroying so MainWindow can re-open the dialog."""
         event.ignore()
@@ -409,13 +418,14 @@ class MainWindow(QMainWindow):
         self._summary_has_error = False
         self._safe_scan_active = False
         self._scan_active = False
-        self._safe_scan_expected_duration = self._settings.safe_scan.default_duration_seconds
+        self._safe_scan_expected_duration = float(self._settings.safe_scan.timeout_seconds)
         self._safe_scan_history: List[float] = []
         self._safe_scan_elapsed_start: float | None = None
         self._safe_scan_targets: List[str] = []
         self._safe_scan_batch_total = 0
-        self._safe_scan_batch_expected_duration = self._safe_scan_expected_duration
+        self._safe_scan_batch_expected_duration = 0.0
         self._safe_scan_completed = 0
+        self._safe_scan_parallel = max(1, self._settings.safe_scan.max_parallel)
         self._safe_progress_timer = QTimer(self)
         self._safe_progress_timer.timeout.connect(self._on_safe_progress_tick)
         self._state_save_timer = QTimer(self)
@@ -713,6 +723,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(self._t("advanced_running_status"))
         self._summary_status = self._t("advanced_running_status")
         self._update_summary()
+        self._announce_advanced_eta(len(first.targets))
         self._ensure_log_dialog(first.targets, show=False, reset=True)
         self._scan_manager.start(first)
         self._refresh_action_buttons()
@@ -1145,6 +1156,17 @@ class MainWindow(QMainWindow):
             self._result_lookup[result.target] = result
             self._insert_row_for_result(result)
 
+    def _announce_advanced_eta(self, target_count: int) -> None:
+        eta_seconds = self._estimate_parallel_total_seconds(
+            target_count,
+            float(self._settings.scan.advanced_timeout_seconds),
+            timeout_seconds=float(self._settings.scan.advanced_timeout_seconds),
+            parallelism=self._settings.scan.advanced_max_parallel,
+        )
+        eta_text = self._format_eta_seconds(eta_seconds)
+        message = self._t("advanced_running_status_eta").format(eta=eta_text)
+        self.statusBar().showMessage(message)
+        self._summary_status = message
     def _build_advanced_config(self, targets: Sequence[str], *, include_os: bool) -> ScanConfig:
         modes: Set[ScanMode] = {ScanMode.PORTS}
         if include_os:
@@ -1173,6 +1195,21 @@ class MainWindow(QMainWindow):
             return QColor(color_hex)
         return DEFAULT_PRIORITY_COLORS.get(priority)
 
+    def _estimate_parallel_total_seconds(
+        self,
+        job_count: int,
+        per_job_seconds: float,
+        *,
+        timeout_seconds: float,
+        parallelism: int,
+    ) -> float:
+        if job_count <= 0:
+            return 0.0
+        per_job = max(0.0, min(per_job_seconds, timeout_seconds))
+        slots = max(1, parallelism)
+        batches = math.ceil(job_count / slots)
+        return per_job * batches
+
 
     def _ensure_safe_progress_visible(self) -> None:
         self.safe_progress_label.setVisible(True)
@@ -1186,35 +1223,55 @@ class MainWindow(QMainWindow):
 
     def _start_safe_progress(self) -> None:
         self._safe_scan_elapsed_start = time.monotonic()
-        baseline = self._settings.safe_scan.default_duration_seconds
         total = max(self._safe_scan_batch_total, 1)
-        self._safe_scan_batch_expected_duration = max(
-            baseline * total, self._safe_scan_expected_duration * total
+        self._safe_scan_batch_expected_duration = self._estimate_parallel_total_seconds(
+            total,
+            self._safe_scan_expected_duration,
+            timeout_seconds=float(self._settings.safe_scan.timeout_seconds),
+            parallelism=self._safe_scan_parallel,
         )
         self._safe_scan_completed = 0
         self.safe_progress_bar.setValue(0)
         self.safe_progress_bar.setFormat("%p%")
-        self._update_safe_progress_label(0.0)
+        remaining, _ = self._safe_scan_progress_snapshot(0.0)
+        self._update_safe_progress_label(0.0, remaining)
         self._ensure_safe_progress_visible()
         if not self._safe_progress_timer.isActive():
             self._safe_progress_timer.start(self._settings.safe_scan.progress_update_ms)
+
+    def _safe_scan_progress_snapshot(self, elapsed_seconds: float) -> tuple[float, float]:
+        remaining_jobs = max(self._safe_scan_batch_total - self._safe_scan_completed, 0)
+        remaining_seconds = self._estimate_parallel_total_seconds(
+            remaining_jobs,
+            self._safe_scan_expected_duration,
+            timeout_seconds=float(self._settings.safe_scan.timeout_seconds),
+            parallelism=self._safe_scan_parallel,
+        )
+        total_seconds = elapsed_seconds + remaining_seconds
+        if remaining_jobs == 0 and self._safe_scan_completed >= self._safe_scan_batch_total:
+            remaining_seconds = 0.0
+            total_seconds = elapsed_seconds
+        self._safe_scan_batch_expected_duration = max(total_seconds, 1.0)
+        return remaining_seconds, self._safe_scan_batch_expected_duration
 
     def _on_safe_progress_tick(self) -> None:
         if not self._safe_scan_active or self._safe_scan_elapsed_start is None:
             return
         elapsed = time.monotonic() - self._safe_scan_elapsed_start
-        expected = self._safe_scan_batch_expected_duration
-        if expected <= 0:
-            expected = self._settings.safe_scan.default_duration_seconds
-        fraction = min((elapsed / expected) * 0.9, 0.9)
-        progress = int(fraction * 100)
+        remaining, expected = self._safe_scan_progress_snapshot(elapsed)
+        progress = 0
+        if expected > 0:
+            progress = min(int((elapsed / expected) * 100), 99)
+        if self._safe_scan_batch_total:
+            ratio = self._safe_scan_completed / self._safe_scan_batch_total
+            progress = max(progress, int(ratio * 100))
+        if remaining <= 0 and self._safe_scan_completed >= self._safe_scan_batch_total:
+            progress = 100
         self.safe_progress_bar.setValue(progress)
-        self._update_safe_progress_label(elapsed)
+        self._update_safe_progress_label(elapsed, remaining)
 
-    def _update_safe_progress_label(self, elapsed_seconds: float) -> None:
-        remaining = max(self._safe_scan_batch_expected_duration - elapsed_seconds, 0)
-        mins, secs = divmod(int(round(remaining)), 60)
-        eta = f"{mins:02d}:{secs:02d}"
+    def _update_safe_progress_label(self, elapsed_seconds: float, remaining_seconds: float) -> None:
+        eta = self._format_eta_seconds(remaining_seconds)
         self.safe_progress_label.setText(
             self._t("safe_scan_progress_running_multi").format(
                 done=self._safe_scan_completed,
@@ -1245,8 +1302,12 @@ class MainWindow(QMainWindow):
         if len(self._safe_scan_history) > self._settings.safe_scan.history_limit:
             self._safe_scan_history.pop(0)
         average = sum(self._safe_scan_history) / len(self._safe_scan_history)
-        baseline = self._settings.safe_scan.default_duration_seconds
-        self._safe_scan_expected_duration = max(baseline, average)
+        timeout = float(self._settings.safe_scan.timeout_seconds)
+        self._safe_scan_expected_duration = min(timeout, average)
+        if self._safe_scan_active and self._safe_scan_elapsed_start is not None:
+            elapsed = time.monotonic() - self._safe_scan_elapsed_start
+            remaining, _ = self._safe_scan_progress_snapshot(elapsed)
+            self._update_safe_progress_label(elapsed, remaining)
 
     def _handle_sort_request(self, column: int) -> None:
         if self._sort_column == column:
@@ -1284,7 +1345,8 @@ class MainWindow(QMainWindow):
         self._safe_scan_batch_total = total
         if self._safe_scan_elapsed_start is not None:
             elapsed = time.monotonic() - self._safe_scan_elapsed_start
-            self._update_safe_progress_label(elapsed)
+            remaining, _ = self._safe_scan_progress_snapshot(elapsed)
+            self._update_safe_progress_label(elapsed, remaining)
 
     def _on_safe_scan_result(self, report: SafeScanReport) -> None:
         self._set_diagnostics_status(report.target, "completed" if report.success else "failed")
@@ -1345,9 +1407,8 @@ class MainWindow(QMainWindow):
         if self._active_scan_kind == "advanced" and self._pending_scan_configs:
             next_config = self._pending_scan_configs.pop(0)
             self._current_scan_targets = list(next_config.targets)
-            self.statusBar().showMessage(self._t("advanced_running_status"))
+            self._announce_advanced_eta(len(next_config.targets))
             self._ensure_log_dialog(next_config.targets, show=False, reset=True)
-            self._summary_status = self._t("advanced_running_status")
             self._update_summary()
             self._scan_manager.start(next_config)
             return

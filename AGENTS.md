@@ -42,6 +42,7 @@
 - macOS builds run as regular users (no code signing / helper), so ICMP/SYN/OS phases fall back to TCP-only behavior; warn users in the GUI and README to prefer Windows for full coverage or run the CLI with `sudo` when necessary.
 - CSV/JSON exports include score breakdowns and error strings so analysts can audit decisions without rerunning scans.
 - Keep dependencies minimal to maintain OSS friendliness; new libraries should be justified.
+- ETA values for advanced discovery and Safe Script are calculated from the target count, worker parallelism, and each phase’s timeout. The first batch assumes the full timeout, then subsequent batches shorten the estimate using the runtime history captured during the session.
 
 ## How To Extend Safely
 - Add new scan phases by extending `ScanMode`, making sure cancellation is respected between phases and rating inputs remain deterministic.
