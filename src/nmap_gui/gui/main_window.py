@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import List, Sequence, Set
 
 from PySide6.QtCore import QTimer
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QFileDialog, QMainWindow, QMessageBox, QVBoxLayout, QWidget
 
 from ..config import AppSettings, get_settings
@@ -40,7 +41,12 @@ from .summary_panel import SummaryPanel
 class MainWindow(QMainWindow):
     """Primary top-level window."""
 
-    def __init__(self, settings: AppSettings | None = None, state: AppState | None = None) -> None:
+    def __init__(
+        self,
+        settings: AppSettings | None = None,
+        state: AppState | None = None,
+        app_icon: QIcon | None = None,
+    ) -> None:
         super().__init__()
         self._settings = settings or get_settings()
         self._language = detect_language()
@@ -50,6 +56,8 @@ class MainWindow(QMainWindow):
             "Low": translate("priority_low", self._language),
         }
         self.setWindowTitle(self._t("window_title"))
+        if app_icon is not None and not app_icon.isNull():
+            self.setWindowIcon(app_icon)
         self.resize(1000, 700)
         self._pending_scan_configs: List[ScanConfig] = []
         self._active_scan_kind: str | None = None
@@ -135,14 +143,12 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(central)
         layout.addWidget(self._controls)
         layout.addWidget(self._result_grid.widget())
-        layout.addWidget(self._report_viewer)
         layout.addWidget(self._summary_panel)
         layout.addWidget(self._export_toolbar)
         layout.setStretch(0, 0)
         layout.setStretch(1, 2)
-        layout.setStretch(2, 1)
+        layout.setStretch(2, 0)
         layout.setStretch(3, 0)
-        layout.setStretch(4, 0)
         self.setCentralWidget(central)
         self.statusBar().showMessage(self._t("ready"))
         self._update_summary()
@@ -172,7 +178,7 @@ class MainWindow(QMainWindow):
         self._update_summary()
 
     def _on_start_clicked(self) -> None:
-        targets = sanitize_targets(self._controls.targets_text())
+        targets = list(dict.fromkeys(sanitize_targets(self._controls.targets_text())))
         if not targets:
             QMessageBox.warning(
                 self,
@@ -184,6 +190,7 @@ class MainWindow(QMainWindow):
         self._requested_host_estimate = self._estimate_requested_hosts(targets)
         self._summary_has_error = False
         self._reset_result_storage(emit_selection_changed=False)
+        self._result_grid.reset_progress(len(targets))
         self._set_summary_state("summary_status_scanning")
         config = ScanConfig(
             targets=targets,
@@ -261,6 +268,7 @@ class MainWindow(QMainWindow):
         self._set_summary_state("summary_status_advanced")
         self._announce_advanced_eta(len(config.targets))
         self._ensure_log_dialog(config.targets, show=False, reset=True)
+        self._result_grid.reset_progress(len(config.targets))
         self._scan_manager.start(config)
         self._refresh_action_buttons()
 
@@ -330,7 +338,7 @@ class MainWindow(QMainWindow):
     def _reset_result_storage(self, *, emit_selection_changed: bool = True) -> None:
         self._result_store.reset(emit_selection_changed=emit_selection_changed)
         self._update_mac_limited_label()
-        self._report_viewer.clear_report()
+        self._report_viewer.close()
 
     def _on_result_grid_selection_changed(self) -> None:
         self._refresh_action_buttons()
@@ -342,8 +350,10 @@ class MainWindow(QMainWindow):
 
     def _store_diagnostics_report(self, report: SafeScanReport) -> None:
         self._result_store.set_diagnostics_report(report.target, report)
-        current_target = self._report_viewer.current_target()
-        if current_target is None or current_target == report.target:
+        should_show = (not self._report_viewer.isVisible()) or (
+            self._report_viewer.current_target() == report.target
+        )
+        if should_show:
             self._report_viewer.show_report(report)
 
     def _on_diagnostics_view_requested(self, target: str) -> None:
@@ -488,6 +498,7 @@ class MainWindow(QMainWindow):
             self._current_scan_targets = list(next_config.targets)
             self._announce_advanced_eta(len(next_config.targets))
             self._ensure_log_dialog(next_config.targets, show=False, reset=True)
+            self._result_grid.reset_progress(len(next_config.targets))
             self._scan_manager.start(next_config)
             return
         self._result_grid.finish_progress()
