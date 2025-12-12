@@ -1,0 +1,55 @@
+"""Tests for configuration loader behavior."""
+from __future__ import annotations
+
+from pathlib import Path
+
+import yaml
+
+from nmap_gui import config
+
+
+def test_load_settings_creates_file_when_missing(tmp_path):
+    cfg_path = tmp_path / "rogue-finder.config.yaml"
+
+    settings = config.load_settings(cfg_path)
+
+    assert cfg_path.exists()
+    assert settings.scan.port_scan_list
+    # File should contain default version marker
+    data = yaml.safe_load(cfg_path.read_text())
+    assert data["version"] == config.DEFAULT_SETTINGS["version"]
+
+
+def test_load_settings_merges_and_preserves_unknown_keys(tmp_path):
+    cfg_path = tmp_path / "rogue-finder.config.yaml"
+    initial = {
+        "scan": {"default_timeout_seconds": 123, "custom_note": "keep"},
+        "rating": {"icmp_points": 5},
+        "extra_top_level": {"foo": "bar"},
+    }
+    cfg_path.write_text(yaml.safe_dump(initial, sort_keys=False))
+
+    settings = config.load_settings(cfg_path)
+
+    # User override should win
+    assert settings.scan.default_timeout_seconds == 123
+    # Missing defaults should now be written back to disk
+    data = yaml.safe_load(cfg_path.read_text())
+    assert "port_scan_list" in data["scan"]
+    # Custom keys should persist
+    assert data["scan"]["custom_note"] == "keep"
+    assert data["extra_top_level"] == {"foo": "bar"}
+
+
+def test_reset_settings_cache_allows_reload(tmp_path, monkeypatch):
+    cfg_path = tmp_path / "rogue-finder.config.yaml"
+    monkeypatch.chdir(tmp_path)
+    cfg_path.write_text(yaml.safe_dump(config.DEFAULT_SETTINGS))
+    config.reset_settings_cache()
+    loaded_first = config.get_settings()
+    cfg_path.write_text(
+        yaml.safe_dump({**config.DEFAULT_SETTINGS, "version": 99}, sort_keys=False)
+    )
+    config.reset_settings_cache()
+    loaded_second = config.get_settings()
+    assert loaded_first.raw["version"] != loaded_second.raw["version"]

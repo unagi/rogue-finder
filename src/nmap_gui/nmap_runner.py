@@ -14,6 +14,7 @@ from typing import Callable, Dict, List, Sequence, Set, Tuple
 
 from multiprocessing.synchronize import Event as MpEvent
 
+from .config import AppSettings, DEFAULT_SETTINGS, get_settings
 from .error_codes import (
     ERROR_NMAP_FAILED,
     ERROR_NMAP_NOT_FOUND,
@@ -25,30 +26,8 @@ from .models import ErrorRecord, HostScanResult, ScanLogEvent, ScanMode, SafeSca
 from .rating import apply_rating
 
 LOGGER = logging.getLogger(__name__)
-DEFAULT_TIMEOUT = 300  # seconds per phase
-PORT_SCAN_LIST = [
-    21,
-    22,
-    80,
-    139,
-    443,
-    445,
-    1433,
-    3000,
-    3306,
-    3389,
-    5432,
-    5672,
-    5900,
-    5985,
-    6379,
-    8000,
-    8080,
-    8888,
-    11211,
-    15672,
-    50000,
-]
+DEFAULT_TIMEOUT = int(DEFAULT_SETTINGS["scan"]["default_timeout_seconds"])  # seconds per phase
+PORT_SCAN_LIST = list(DEFAULT_SETTINGS["scan"]["port_scan_list"])
 
 _PRIVILEGED_SCAN_PATTERNS = (
     "requires root privileges",
@@ -229,7 +208,12 @@ def run_full_scan(
     scan_modes: Set[ScanMode],
     cancel_event: MpEvent | None = None,
     log_callback: Callable[[ScanLogEvent], None] | None = None,
+    settings: AppSettings | None = None,
 ) -> List[HostScanResult]:
+    app_settings = settings or get_settings()
+    scan_settings = app_settings.scan
+    rating_settings = app_settings.rating
+    phase_timeout = scan_settings.default_timeout_seconds
     errors: List[ErrorRecord] = []
     host_results: Dict[str, HostScanResult] = {}
     has_icmp_alive = False
@@ -249,6 +233,7 @@ def run_full_scan(
     def _run_phase(args: Sequence[str], phase: ScanMode | None) -> str:
         return run_nmap(
             args,
+            timeout=phase_timeout,
             log_callback=log_callback,
             log_target=target,
             log_phase=phase,
@@ -264,11 +249,11 @@ def run_full_scan(
             rated: List[HostScanResult] = []
             for item in host_results.values():
                 item.errors = list(errors)
-                rated.append(apply_rating(item))
+                rated.append(apply_rating(item, rating_settings))
             return rated
         if errors or not _is_network_target(target):
             placeholder = HostScanResult(target=target, errors=list(errors))
-            return [apply_rating(placeholder)]
+            return [apply_rating(placeholder, rating_settings)]
         return []
 
     def _handle_cancel() -> List[HostScanResult]:
@@ -295,7 +280,7 @@ def run_full_scan(
             has_icmp_alive or ScanMode.ICMP not in scan_modes
         )
         if should_scan_ports:
-            port_list = ",".join(str(p) for p in PORT_SCAN_LIST)
+            port_list = ",".join(str(p) for p in scan_settings.port_scan_list)
             port_args = ["nmap", "-sS", "-p", port_list, target, "-T4"]
             try:
                 xml_text = _run_phase(port_args, ScanMode.PORTS)
@@ -326,7 +311,7 @@ def run_full_scan(
             for host_key, ports in port_map.items():
                 host_result = _ensure_host(host_key)
                 host_result.open_ports = ports
-                host_result.high_ports = [p for p in ports if p >= 50000]
+                host_result.high_ports = [p for p in ports if p >= scan_settings.high_port_minimum]
         if cancel_event and cancel_event.is_set():
             return _handle_cancel()
 
@@ -349,7 +334,7 @@ def run_full_scan(
     except NmapNotInstalledError:
         errors.append(build_error(ERROR_NMAP_NOT_FOUND))
     except subprocess.TimeoutExpired as exc:
-        timeout_value = exc.timeout if getattr(exc, "timeout", None) else DEFAULT_TIMEOUT
+        timeout_value = exc.timeout if getattr(exc, "timeout", None) else phase_timeout
         errors.append(build_error(ERROR_NMAP_TIMEOUT, timeout=timeout_value))
     except NmapExecutionError as exc:
         errors.append(build_error(ERROR_NMAP_FAILED, detail=str(exc)))
@@ -361,7 +346,14 @@ def _format_cli_command(args: Sequence[str]) -> str:
     return " ".join(shlex.quote(str(part)) for part in args)
 
 
-def run_safe_script_scan(target: str, timeout: int = DEFAULT_TIMEOUT) -> SafeScanReport:
+def run_safe_script_scan(
+    target: str,
+    timeout: int | None = None,
+    settings: AppSettings | None = None,
+) -> SafeScanReport:
+    app_settings = settings or get_settings()
+    scan_settings = app_settings.scan
+    effective_timeout = timeout if timeout is not None else scan_settings.default_timeout_seconds
     started_at = datetime.now(timezone.utc)
     base_args = ["nmap", "--noninteractive", "-sV", "--script", "safe", target, "-T4"]
     stdout = ""
@@ -377,7 +369,7 @@ def run_safe_script_scan(target: str, timeout: int = DEFAULT_TIMEOUT) -> SafeSca
             check=False,
             text=True,
             capture_output=True,
-            timeout=timeout,
+            timeout=effective_timeout,
             stdin=subprocess.DEVNULL,
             startupinfo=_WINDOWS_STARTUPINFO,
             creationflags=_WINDOWS_CREATION_FLAGS,
@@ -391,7 +383,7 @@ def run_safe_script_scan(target: str, timeout: int = DEFAULT_TIMEOUT) -> SafeSca
     except NmapNotInstalledError:
         errors.append(build_error(ERROR_NMAP_NOT_FOUND))
     except subprocess.TimeoutExpired as exc:
-        timeout_value = exc.timeout if getattr(exc, "timeout", None) else DEFAULT_TIMEOUT
+        timeout_value = exc.timeout if getattr(exc, "timeout", None) else effective_timeout
         errors.append(build_error(ERROR_NMAP_TIMEOUT, timeout=timeout_value))
     except Exception as exc:  # noqa: BLE001
         errors.append(build_error(ERROR_NMAP_FAILED, detail=str(exc)))

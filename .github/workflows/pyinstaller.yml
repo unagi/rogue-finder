@@ -50,6 +50,11 @@ jobs:
             --windowed \
             --uac-admin
 
+      - name: Write default configuration
+        shell: bash
+        run: |
+          python -m nmap_gui.config --write-default dist/rogue-finder.config.yaml
+
       - name: Normalize artifact layout
         shell: bash
         run: |
@@ -102,6 +107,11 @@ jobs:
             --noconfirm \
             --onefile \
             --windowed
+
+      - name: Write default configuration
+        shell: bash
+        run: |
+          python -m nmap_gui.config --write-default dist/rogue-finder.config.yaml
 
       - name: Normalize artifact layout
         shell: bash

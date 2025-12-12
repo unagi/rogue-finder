@@ -30,6 +30,22 @@ Add `--debug` for verbose logging.
 5. Export via CSV or JSON once results are available
 6. Use the new **Safe Script** action on any discovered host to launch a serialized `nmap --script safe` run; results open in a dedicated dialog where you can review the command/output and save a timestamped text report
 
+## Configuration
+Rogue Finder automatically ensures a `rogue-finder.config.yaml` file exists in the directory you launch the app from (next to the PyInstaller binary or your working tree). If the file is missing it is created with defaults; when the schema grows in future releases, missing keys are added automatically while your existing overrides stay intact.
+
+Key sections you can tune:
+
+- `scan`: timeout per phase (`default_timeout_seconds`), port list (`port_scan_list`), and the high-port cutoff considered interesting.
+- `rating`: ICMP/port/OS weights plus combo bonuses and priority thresholds.
+- `ui`: priority row colors (hex strings).
+- `safe_scan`: simulated progress timings for the safe-script dialog.
+
+Because the file is human-friendly YAML, you can version-control it per environment or ship different defaults for specific teams. Use the helper command below to dump the latest template without launching the GUI:
+
+```bash
+python -m nmap_gui.config --write-default ./rogue-finder.config.yaml
+```
+
 ### Safe Script Diagnostics
 
 - The diagnostics button appears next to every discovered target once the discovery scan returns results.

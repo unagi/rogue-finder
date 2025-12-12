@@ -9,3 +9,5 @@ dist/
 .DS_Store
 .idea/
 .vscode/
+rogue-finder.code-workspace
+rogue-finder.config.yaml

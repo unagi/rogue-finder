@@ -30,6 +30,9 @@ Rogue Finder is a cross-platform desktop utility that orchestrates lightweight N
 - Run Rogue Finder from a directory where you have write access if you plan to export reports.
 - When scanning production networks, obtain the necessary approvals and avoid intrusive options beyond what Rogue Finder uses by default.
 
+## Configuration File
+Every run checks for `rogue-finder.config.yaml` in the directory you launched Rogue Finder from. If the file is missing it is generated with safe defaults; when you upgrade to a newer version the loader backfills any new keys while leaving your existing overrides untouched. Edit this YAML to tune scan timeouts and port lists (`scan` section), weighting rules for scoring (`rating`), safe-script timing heuristics (`safe_scan`), or UI row colors (`ui`). Ship a tailored copy alongside the PyInstaller binary if you want operators to start with organization-specific defaults.
+
 ## FAQ & Error Codes
 Rogue Finder surfaces consistent error codes everywhere (GUI table, dialogs, exports). Use this list to decide the next action.
 
@@ -37,7 +40,7 @@ Rogue Finder surfaces consistent error codes everywhere (GUI table, dialogs, exp
 | --- | --- | --- |
 | **RF001** | Scan was aborted before completion. | Restart the scan once you are ready. If you pressed **Stop**, simply re-run. |
 | **RF002** | Nmap executable not found on PATH. | Install Nmap for your OS and make sure `nmap` works in a terminal, then relaunch Rogue Finder. |
-| **RF003** | Nmap timed out (default 300 seconds). | Reduce the scope (fewer hosts/ports) or increase the timeout by editing `DEFAULT_TIMEOUT` in `nmap_runner.py`, then rebuild/package. |
+| **RF003** | Nmap timed out (default 300 seconds). | Reduce the scope (fewer hosts/ports) or bump `scan.default_timeout_seconds` inside `rogue-finder.config.yaml`, then rebuild/package if you are shipping PyInstaller artifacts. |
 | **RF004** | Nmap returned an execution error (stderr included). | Inspect the detail text (e.g., permissions/firewall). Adjust targets or run Rogue Finder as an administrator if required. |
 | **RF005** | Worker processes stopped unexpectedly. | Rerun with fewer simultaneous targets or restart the application to reset the worker pool. |
 | **RF006** | Generic scan crash (uncaught exception detail shown). | Review the error detail and recent edits. If reproducible, file an issue with steps and logs. |
