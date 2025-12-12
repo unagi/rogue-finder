@@ -6,6 +6,9 @@ import yaml
 from nmap_gui import config
 
 
+USER_TIMEOUT_OVERRIDE = 123
+
+
 def test_load_settings_creates_file_when_missing(tmp_path):
     cfg_path = tmp_path / "rogue-finder.config.yaml"
 
@@ -21,7 +24,7 @@ def test_load_settings_creates_file_when_missing(tmp_path):
 def test_load_settings_merges_and_preserves_unknown_keys(tmp_path):
     cfg_path = tmp_path / "rogue-finder.config.yaml"
     initial = {
-        "scan": {"default_timeout_seconds": 123, "custom_note": "keep"},
+        "scan": {"default_timeout_seconds": USER_TIMEOUT_OVERRIDE, "custom_note": "keep"},
         "rating": {"icmp_points": 5},
         "extra_top_level": {"foo": "bar"},
     }
@@ -30,7 +33,7 @@ def test_load_settings_merges_and_preserves_unknown_keys(tmp_path):
     settings = config.load_settings(cfg_path)
 
     # User override should win
-    assert settings.scan.default_timeout_seconds == 123
+    assert settings.scan.default_timeout_seconds == USER_TIMEOUT_OVERRIDE
     # Missing defaults should now be written back to disk
     data = yaml.safe_load(cfg_path.read_text())
     assert "port_scan_list" in data["scan"]
