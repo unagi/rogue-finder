@@ -1,21 +1,20 @@
 """PySide6 GUI for the Nmap discovery & rating application."""
 from __future__ import annotations
 
+import copy
 import ipaddress
+import math
 import os
 import shlex
 import sys
 import time
 from datetime import datetime
-from functools import partial
 from pathlib import Path
 from typing import Dict, List, Sequence, Set
 
-from PySide6.QtCore import QByteArray, Qt, QTimer
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QByteArray, QTimer
 from PySide6.QtWidgets import (
     QApplication,
-    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -29,8 +28,6 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
-    QTableWidget,
-    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -38,6 +35,8 @@ from PySide6.QtWidgets import (
 from .config import AppSettings, get_settings
 from .exporters import export_csv, export_json
 from .i18n import detect_language, format_error_list, format_error_record, translate
+from .job_eta import JobEtaController
+from .result_grid import ResultGrid
 from .models import (
     ErrorRecord,
     HostScanResult,
@@ -51,14 +50,6 @@ from .scan_manager import SafeScriptManager, ScanManager
 from .state_store import AppState, load_state, save_state
 from .storage_warnings import StorageWarning, consume_storage_warnings
 from .utils import slugify_filename_component
-
-
-SAFE_SCAN_COLUMN_INDEX = 7
-DEFAULT_PRIORITY_COLORS = {
-    "High": QColor(255, 204, 204),
-    "Medium": QColor(255, 240, 210),
-    "Low": QColor(210, 235, 255),
-}
 
 
 class SafeScanDialog(QDialog):
@@ -172,7 +163,6 @@ class ScanLogDialog(QDialog):
         self._current_target: str | None = None
         self.setWindowTitle(translate("log_dialog_title", language))
         self.setModal(False)
-        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self.setMinimumSize(760, 420)
         self._build_ui()
 
@@ -353,6 +343,11 @@ class ScanLogDialog(QDialog):
     def _t(self, key: str) -> str:
         return translate(key, self._language)
 
+    def closeEvent(self, event) -> None:  # type: ignore[override]
+        """Hide instead of destroying so MainWindow can re-open the dialog."""
+        event.ignore()
+        self.hide()
+
 
 class MainWindow(QMainWindow):
     """Primary top-level window."""
@@ -369,10 +364,23 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(self._t("window_title"))
         self.resize(1000, 700)
         self._results: List[HostScanResult] = []
+        self._result_lookup: Dict[str, HostScanResult] = {}
+        self._pending_scan_configs: List[ScanConfig] = []
+        self._active_scan_kind: str | None = None
+        self._current_scan_targets: List[str] = []
+        self.log_button: QPushButton | None = None
+        self._result_grid = ResultGrid(
+            translator=self._t,
+            language=self._language,
+            priority_labels=self._priority_labels,
+            priority_colors=self._settings.ui.priority_colors,
+            parent=self,
+        )
+        self._result_grid.selectionChanged.connect(self._on_result_grid_selection_changed)
+        self._result_grid.runAdvancedRequested.connect(self._on_run_advanced_clicked)
+        self._result_grid.runSafetyRequested.connect(self._on_run_safety_clicked)
         self._scan_manager = ScanManager(self._settings)
         self._safe_scan_manager = SafeScriptManager(self._settings)
-        self._sort_column: int | None = None
-        self._sort_order = Qt.AscendingOrder
         self.summary_label: QLabel | None = None
         self._target_count = 0
         self._requested_host_estimate = 0
@@ -380,12 +388,13 @@ class MainWindow(QMainWindow):
         self._summary_has_error = False
         self._safe_scan_active = False
         self._scan_active = False
-        self._safe_scan_target: str | None = None
-        self._safe_scan_expected_duration = self._settings.safe_scan.default_duration_seconds
+        self._safe_scan_expected_duration = float(self._settings.safe_scan.default_duration_seconds)
         self._safe_scan_history: List[float] = []
         self._safe_scan_elapsed_start: float | None = None
-        self._safe_progress_timer = QTimer(self)
-        self._safe_progress_timer.timeout.connect(self._on_safe_progress_tick)
+        self._safe_scan_targets: List[str] = []
+        self._safe_scan_batch_total = 0
+        self._safe_scan_completed = 0
+        self._safe_scan_parallel = max(1, self._settings.safe_scan.max_parallel)
         self._state_save_timer = QTimer(self)
         self._state_save_timer.setSingleShot(True)
         self._state_save_timer.setInterval(750)
@@ -396,7 +405,13 @@ class MainWindow(QMainWindow):
         self._setup_scan_manager()
         self._setup_safe_scan_manager()
         self._build_ui()
+        self._job_eta = JobEtaController(
+            self,
+            self.statusBar().showMessage,
+            self._set_summary_message,
+        )
         self._apply_state_to_widgets()
+        self._update_mac_limited_label()
         self._connect_state_change_signals()
         if not self._prompt_storage_warnings():
             QTimer.singleShot(0, self.close)
@@ -411,6 +426,7 @@ class MainWindow(QMainWindow):
 
     def _setup_safe_scan_manager(self) -> None:
         self._safe_scan_manager.started.connect(self._on_safe_scan_started)
+        self._safe_scan_manager.progress.connect(self._on_safe_scan_progress)
         self._safe_scan_manager.result_ready.connect(self._on_safe_scan_result)
         self._safe_scan_manager.error.connect(self._on_safe_scan_error)
         self._safe_scan_manager.finished.connect(self._on_safe_scan_finished)
@@ -419,7 +435,7 @@ class MainWindow(QMainWindow):
         central = QWidget()
         layout = QVBoxLayout(central)
         layout.addWidget(self._create_settings_panel())
-        layout.addWidget(self._create_table())
+        layout.addWidget(self._result_grid.widget())
         layout.addWidget(self._create_summary_panel())
         layout.addLayout(self._create_export_bar())
         self.setCentralWidget(central)
@@ -440,56 +456,27 @@ class MainWindow(QMainWindow):
         self.target_input.document().setDocumentMargin(4)
         grid.addWidget(self.target_input, 1, 0, 1, 4)
 
-        self.icmp_checkbox = QCheckBox(self._t("label_icmp"))
-        self.icmp_checkbox.setChecked(True)
-        self.port_checkbox = QCheckBox(self._t("label_ports"))
-        self.port_checkbox.setChecked(True)
-        self.os_checkbox = QCheckBox(self._t("label_os"))
-        self.os_checkbox.setChecked(True)
-
-        grid.addWidget(self.icmp_checkbox, 2, 0)
-        grid.addWidget(self.port_checkbox, 2, 1)
-        grid.addWidget(self.os_checkbox, 2, 2)
-
-        self.start_button = QPushButton(self._t("start"))
+        self.start_button = QPushButton(self._t("fast_scan_button"))
         self.stop_button = QPushButton(self._t("stop"))
         self.stop_button.setEnabled(False)
+        self.clear_button = QPushButton(self._t("clear_results_button"))
+        self.log_button = QPushButton(self._t("open_log_button"))
+        self.log_button.setEnabled(False)
         self.progress_bar = QProgressBar()
         self.progress_bar.setValue(0)
 
         self.start_button.clicked.connect(self._on_start_clicked)
         self.stop_button.clicked.connect(self._on_stop_clicked)
+        self.clear_button.clicked.connect(self._on_clear_results)
+        self.log_button.clicked.connect(self._on_show_log_clicked)
 
-        grid.addWidget(self.start_button, 3, 0)
-        grid.addWidget(self.stop_button, 3, 1)
-        grid.addWidget(self.progress_bar, 3, 2, 1, 2)
+        grid.addWidget(self.start_button, 2, 0)
+        grid.addWidget(self.stop_button, 2, 1)
+        grid.addWidget(self.clear_button, 2, 2)
+        grid.addWidget(self.log_button, 2, 3)
+        grid.addWidget(self.progress_bar, 3, 0, 1, 4)
 
         return group
-
-    def _create_table(self) -> QWidget:
-        self.table = QTableWidget(0, 8)
-        self.table.setHorizontalHeaderLabels(
-            [
-                self._t("table_target"),
-                self._t("table_alive"),
-                self._t("table_ports"),
-                self._t("table_os"),
-                self._t("table_score"),
-                self._t("table_priority"),
-                self._t("table_errors"),
-                self._t("table_safe_action"),
-            ]
-        )
-        header = self.table.horizontalHeader()
-        header.setStretchLastSection(True)
-        header.setSortIndicatorShown(False)
-        header.setSectionsClickable(True)
-        header.sectionClicked.connect(self._handle_sort_request)
-        self.table.setSortingEnabled(False)
-        self.table.setWordWrap(False)
-        self.table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
-        return self.table
 
     def _create_summary_panel(self) -> QWidget:
         group = QGroupBox(self._t("summary_title"))
@@ -497,14 +484,13 @@ class MainWindow(QMainWindow):
         self.summary_label = QLabel("")
         self.summary_label.setWordWrap(True)
         layout.addWidget(self.summary_label)
-        self.safe_progress_label = QLabel(self._t("safe_scan_progress_idle"))
-        self.safe_progress_bar = QProgressBar()
-        self.safe_progress_bar.setRange(0, 100)
-        self.safe_progress_bar.setValue(0)
-        self.safe_progress_label.setVisible(False)
-        self.safe_progress_bar.setVisible(False)
-        layout.addWidget(self.safe_progress_label)
-        layout.addWidget(self.safe_progress_bar)
+        self.mac_limited_label = QLabel("")
+        self.mac_limited_label.setWordWrap(True)
+        font = self.mac_limited_label.font()
+        font.setItalic(True)
+        self.mac_limited_label.setFont(font)
+        self.mac_limited_label.setVisible(False)
+        layout.addWidget(self.mac_limited_label)
         return group
 
     def _create_export_bar(self) -> QHBoxLayout:
@@ -545,15 +531,9 @@ class MainWindow(QMainWindow):
         )
         self.summary_label.setText(summary_text)
 
-    def _collect_scan_modes(self) -> Set[ScanMode]:
-        modes: Set[ScanMode] = set()
-        if self.icmp_checkbox.isChecked():
-            modes.add(ScanMode.ICMP)
-        if self.port_checkbox.isChecked():
-            modes.add(ScanMode.PORTS)
-        if self.os_checkbox.isChecked():
-            modes.add(ScanMode.OS)
-        return modes
+    def _set_summary_message(self, message: str) -> None:
+        self._summary_status = message
+        self._update_summary()
 
     def _on_start_clicked(self) -> None:
         targets = sanitize_targets(self.target_input.toPlainText())
@@ -564,206 +544,99 @@ class MainWindow(QMainWindow):
                 self._t("missing_targets_body"),
             )
             return
-        modes = self._collect_scan_modes()
-        if not modes:
-            QMessageBox.warning(
-                self,
-                self._t("missing_modes_title"),
-                self._t("missing_modes_body"),
-            )
-            return
-        if not self._has_required_privileges(modes):
-            self._show_privileged_hint()
-            return
         self._target_count = len(targets)
         self._requested_host_estimate = self._estimate_requested_hosts(targets)
         self._summary_status = self._t("scanning")
         self._summary_has_error = False
-        self._results.clear()
-        self.table.setRowCount(0)
+        self._reset_result_storage(emit_selection_changed=False)
         self._update_summary()
-        config = ScanConfig(targets=targets, scan_modes=modes)
-        self._ensure_log_dialog(targets)
+        config = ScanConfig(
+            targets=targets,
+            scan_modes={ScanMode.ICMP, ScanMode.PORTS},
+            port_list=self._settings.scan.fast_port_scan_list,
+            timeout_seconds=self._settings.scan.default_timeout_seconds,
+            detail_label="fast",
+        )
+        self._pending_scan_configs = []
+        self._active_scan_kind = "fast"
+        self._current_scan_targets = list(targets)
+        self._ensure_log_dialog(targets, show=False, reset=True)
         self._scan_manager.start(config)
         self._scan_active = True
         self.start_button.setEnabled(False)
         self.stop_button.setEnabled(True)
         self.statusBar().showMessage(self._t("scanning"))
-        self._refresh_safe_scan_button_states()
+        self._refresh_action_buttons()
 
-    def _on_stop_clicked(self) -> None:
-        self._scan_manager.stop()
-        self.start_button.setEnabled(True)
-        self.stop_button.setEnabled(False)
-        self.statusBar().showMessage(self._t("scan_stopped"))
-        self._summary_status = self._t("scan_stopped")
-        self._scan_active = False
-        self._update_summary()
-        self._refresh_safe_scan_button_states()
-        if self._log_dialog:
-            self._log_dialog.mark_scan_finished()
-
-    def _on_scan_started(self, total: int) -> None:
-        self.progress_bar.setMaximum(max(total, 1))
-        self.progress_bar.setValue(0)
-
-    def _on_progress(self, done: int, total: int) -> None:
-        self.progress_bar.setMaximum(max(total, 1))
-        self.progress_bar.setValue(done)
-
-    def _on_result(self, result: HostScanResult) -> None:
-        self._results.append(result)
-        sorting_enabled = self.table.isSortingEnabled()
-        if sorting_enabled:
-            self.table.setSortingEnabled(False)
-        row = self.table.rowCount()
-        self.table.insertRow(row)
-        self.table.setItem(row, 0, self._make_item(result.target, Qt.AlignLeft))
-        alive_text = self._t("alive_yes") if result.is_alive else self._t("alive_no")
-        self.table.setItem(row, 1, self._make_item(alive_text, Qt.AlignCenter))
-        ports_text = ", ".join(str(p) for p in result.open_ports)
-        self.table.setItem(row, 2, self._make_item(ports_text, Qt.AlignLeft))
-        os_text = result.os_guess
-        if result.os_accuracy is not None:
-            os_text = f"{os_text} ({result.os_accuracy}%)"
-        self.table.setItem(row, 3, self._make_item(os_text, Qt.AlignLeft))
-        self.table.setItem(row, 4, self._make_item(str(result.score), Qt.AlignRight))
-        display_priority = self._priority_labels.get(result.priority, result.priority)
-        priority_item = self._make_item(display_priority, Qt.AlignCenter)
-        self.table.setItem(row, 5, priority_item)
-        error_text = "\n".join(format_error_list(result.errors, self._language))
-        self.table.setItem(row, 6, self._make_item(error_text, Qt.AlignLeft))
-        self._add_safe_scan_button(row, result.target)
-        self._apply_row_style(row, result.priority)
-        if sorting_enabled:
-            self.table.setSortingEnabled(True)
-            if self._sort_column is not None:
-                self.table.sortItems(self._sort_column, self._sort_order)
-        self._update_summary()
-
-    def _make_item(
-        self, text: str, alignment: Qt.AlignmentFlag | None = None
-    ) -> QTableWidgetItem:
-        item = QTableWidgetItem(text)
-        if alignment is not None:
-            item.setTextAlignment(int(alignment | Qt.AlignVCenter))
-        return item
-
-    def _apply_row_style(self, row: int, priority: str) -> None:
-        color = self._priority_color(priority)
-        if not color:
+    def _on_clear_results(self) -> None:
+        if self._scan_active or self._safe_scan_active:
+            QMessageBox.information(
+                self,
+                self._t("clear_blocked_title"),
+                self._t("clear_blocked_body"),
+            )
             return
-        for col in range(self.table.columnCount()):
-            item = self.table.item(row, col)
-            if item:
-                item.setBackground(color)
-
-    def _priority_color(self, priority: str) -> QColor | None:
-        color_hex = self._settings.ui.priority_colors.get(priority)
-        if color_hex:
-            return QColor(color_hex)
-        return DEFAULT_PRIORITY_COLORS.get(priority)
-
-    def _add_safe_scan_button(self, row: int, target: str) -> None:
-        button = QPushButton(self._t("safe_scan_button"))
-        button.clicked.connect(partial(self._on_safe_scan_button_clicked, target))
-        button.setEnabled(self._safe_scan_buttons_enabled())
-        self.table.setCellWidget(row, SAFE_SCAN_COLUMN_INDEX, button)
-
-    def _safe_scan_buttons_enabled(self) -> bool:
-        return (not self._scan_active) and (not self._safe_scan_active)
-
-    def _refresh_safe_scan_button_states(self) -> None:
-        enabled = self._safe_scan_buttons_enabled()
-        for button in self._iter_safe_scan_buttons():
-            button.setEnabled(enabled)
-
-    def _iter_safe_scan_buttons(self):
-        for row in range(self.table.rowCount()):
-            widget = self.table.cellWidget(row, SAFE_SCAN_COLUMN_INDEX)
-            if isinstance(widget, QPushButton):
-                yield widget
-
-    def _ensure_safe_progress_visible(self) -> None:
-        self.safe_progress_label.setVisible(True)
-        self.safe_progress_bar.setVisible(True)
-
-    def _hide_safe_progress(self) -> None:
-        if self._safe_scan_active:
+        if not self._results:
             return
-        self.safe_progress_label.setVisible(False)
-        self.safe_progress_bar.setVisible(False)
-
-    def _start_safe_progress(self) -> None:
-        self._safe_scan_elapsed_start = time.monotonic()
-        self.safe_progress_bar.setValue(0)
-        self.safe_progress_bar.setFormat("%p%")
-        self._update_safe_progress_label(0.0)
-        self._ensure_safe_progress_visible()
-        if not self._safe_progress_timer.isActive():
-            self._safe_progress_timer.start(self._settings.safe_scan.progress_update_ms)
-
-    def _on_safe_progress_tick(self) -> None:
-        if not self._safe_scan_active or self._safe_scan_elapsed_start is None:
-            return
-        elapsed = time.monotonic() - self._safe_scan_elapsed_start
-        expected = self._safe_scan_expected_duration
-        if expected <= 0:
-            expected = self._settings.safe_scan.default_duration_seconds
-        fraction = min((elapsed / expected) * 0.9, 0.9)
-        progress = int(fraction * 100)
-        self.safe_progress_bar.setValue(progress)
-        self._update_safe_progress_label(elapsed)
-
-    def _update_safe_progress_label(self, elapsed_seconds: float) -> None:
-        remaining = max(self._safe_scan_expected_duration - elapsed_seconds, 0)
-        mins, secs = divmod(int(round(remaining)), 60)
-        eta = f"{mins:02d}:{secs:02d}"
-        baseline = self._settings.safe_scan.default_duration_seconds
-        avg_seconds = max(self._safe_scan_expected_duration, baseline)
-        self.safe_progress_label.setText(
-            self._t("safe_scan_progress_running").format(eta=eta, avg=int(round(avg_seconds)))
+        reply = QMessageBox.question(
+            self,
+            self._t("clear_results_title"),
+            self._t("clear_results_body"),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
         )
+        if reply != QMessageBox.Yes:
+            return
+        self._reset_result_storage()
+        self._update_summary()
+        self._on_form_state_changed()
+        self._refresh_action_buttons()
 
-    def _complete_safe_progress(self, duration: float | None) -> None:
-        self._safe_progress_timer.stop()
-        self.safe_progress_bar.setValue(100)
-        if duration is not None:
-            self.safe_progress_label.setText(
-                self._t("safe_scan_progress_complete").format(seconds=int(round(duration)))
+    def _on_run_advanced_clicked(self) -> None:
+        if self._scan_active or self._safe_scan_active:
+            QMessageBox.information(
+                self,
+                self._t("advanced_blocked_title"),
+                self._t("advanced_blocked_body"),
             )
-        else:
-            self.safe_progress_label.setText(self._t("safe_scan_progress_finished"))
-        QTimer.singleShot(self._settings.safe_scan.progress_visibility_ms, self._hide_safe_progress)
-        self._safe_scan_elapsed_start = None
-
-    def _record_safe_scan_duration(self, duration: float) -> None:
-        self._safe_scan_history.append(duration)
-        if len(self._safe_scan_history) > self._settings.safe_scan.history_limit:
-            self._safe_scan_history.pop(0)
-        average = sum(self._safe_scan_history) / len(self._safe_scan_history)
-        baseline = self._settings.safe_scan.default_duration_seconds
-        self._safe_scan_expected_duration = max(baseline, average)
-
-    def _handle_sort_request(self, column: int) -> None:
-        if self._sort_column == column:
-            self._sort_order = (
-                Qt.DescendingOrder
-                if self._sort_order == Qt.AscendingOrder
-                else Qt.AscendingOrder
+            return
+        advanced_targets = self._result_grid.advanced_targets()
+        if not advanced_targets:
+            QMessageBox.information(
+                self,
+                self._t("advanced_missing_title"),
+                self._t("advanced_missing_body"),
             )
-        else:
-            self._sort_column = column
-            self._sort_order = Qt.AscendingOrder
+            return
+        os_selection = self._result_grid.os_targets()
+        os_targets = sorted(os_selection)
+        base_targets = sorted(advanced_targets - os_selection)
+        configs: List[ScanConfig] = []
+        if base_targets:
+            configs.append(self._build_advanced_config(base_targets, include_os=False))
+        if os_targets:
+            if not self._has_required_privileges({ScanMode.OS}):
+                self._show_privileged_hint()
+            else:
+                configs.append(self._build_advanced_config(os_targets, include_os=True))
+        if not configs:
+            return
+        first = configs[0]
+        self._pending_scan_configs = configs[1:]
+        self._active_scan_kind = "advanced"
+        self._current_scan_targets = list(first.targets)
+        self._scan_active = True
+        self.start_button.setEnabled(False)
+        self.stop_button.setEnabled(True)
+        self.statusBar().showMessage(self._t("advanced_running_status"))
+        self._summary_status = self._t("advanced_running_status")
+        self._update_summary()
+        self._announce_advanced_eta(len(first.targets))
+        self._ensure_log_dialog(first.targets, show=False, reset=True)
+        self._scan_manager.start(first)
+        self._refresh_action_buttons()
 
-        header = self.table.horizontalHeader()
-        header.setSortIndicatorShown(True)
-        header.setSortIndicator(column, self._sort_order)
-        if not self.table.isSortingEnabled():
-            self.table.setSortingEnabled(True)
-        self.table.sortItems(column, self._sort_order)
-
-    def _on_safe_scan_button_clicked(self, target: str) -> None:
+    def _on_run_safety_clicked(self) -> None:
         if self._scan_active:
             QMessageBox.information(
                 self,
@@ -778,26 +651,279 @@ class MainWindow(QMainWindow):
                 self._t("safe_scan_running_body"),
             )
             return
-        self._safe_scan_manager.start(target)
+        safety_selection = self._result_grid.safety_targets()
+        if not safety_selection:
+            QMessageBox.information(
+                self,
+                self._t("safe_scan_missing_title"),
+                self._t("safe_scan_missing_body"),
+            )
+            return
+        targets = sorted(safety_selection)
+        for target in targets:
+            self._set_diagnostics_status(target, "running")
+        self._safe_scan_manager.start(targets)
+        self._refresh_action_buttons()
 
-    def _on_safe_scan_started(self, target: str) -> None:
+    def _on_show_log_clicked(self) -> None:
+        if not self._log_dialog:
+            return
+        self._log_dialog.show()
+        self._log_dialog.raise_()
+        self._log_dialog.activateWindow()
+
+    def _on_stop_clicked(self) -> None:
+        self._scan_manager.stop()
+        self._pending_scan_configs.clear()
+        self._active_scan_kind = None
+        self._current_scan_targets = []
+        self.start_button.setEnabled(True)
+        self.stop_button.setEnabled(False)
+        self.statusBar().showMessage(self._t("scan_stopped"))
+        self._summary_status = self._t("scan_stopped")
+        self._scan_active = False
+        self._job_eta.stop("advanced")
+        self._update_summary()
+        self._refresh_action_buttons()
+        if self._log_dialog:
+            self._log_dialog.mark_scan_finished()
+
+    def _on_scan_started(self, total: int) -> None:
+        self.progress_bar.setMaximum(max(total, 1))
+        self.progress_bar.setValue(0)
+
+    def _on_progress(self, done: int, total: int) -> None:
+        self.progress_bar.setMaximum(max(total, 1))
+        self.progress_bar.setValue(done)
+
+    def _on_result(self, result: HostScanResult) -> None:
+        if self._active_scan_kind == "advanced":
+            self._handle_advanced_result(result)
+        else:
+            self._handle_fast_result(result)
+        self._update_summary()
+        self._on_form_state_changed()
+
+    def _reset_result_storage(self, *, emit_selection_changed: bool = True) -> None:
+        self._results.clear()
+        self._result_lookup = {}
+        self._result_grid.reset(emit_signal=emit_selection_changed)
+        self._update_mac_limited_label()
+
+    def _on_result_grid_selection_changed(self) -> None:
+        self._refresh_action_buttons()
+        self._on_form_state_changed()
+
+    def _merge_result(self, existing: HostScanResult, new_result: HostScanResult) -> None:
+        existing.is_alive = new_result.is_alive
+        existing.open_ports = list(new_result.open_ports)
+        existing.os_guess = new_result.os_guess
+        existing.os_accuracy = new_result.os_accuracy
+        existing.high_ports = list(new_result.high_ports)
+        existing.score_breakdown = dict(new_result.score_breakdown)
+        existing.score = new_result.score
+        existing.priority = new_result.priority
+        existing.errors = list(new_result.errors)
+        existing.detail_level = new_result.detail_level
+        existing.detail_updated_at = new_result.detail_updated_at
+
+    def _set_diagnostics_status(self, target: str, status: str) -> None:
+        result = self._result_lookup.get(target)
+        if not result:
+            return
+        result.diagnostics_status = status
+        result.diagnostics_updated_at = datetime.now().astimezone().isoformat()
+        self._result_grid.update_result(result, allow_sort_restore=False)
+
+    def _refresh_action_buttons(self) -> None:
+        advanced_allowed = (
+            not self._scan_active and not self._safe_scan_active and self._result_grid.has_advanced_selection()
+        )
+        safety_allowed = (
+            not self._scan_active and not self._safe_scan_active and self._result_grid.has_safety_selection()
+        )
+        self._result_grid.set_run_buttons_enabled(advanced=advanced_allowed, safety=safety_allowed)
+        if self.clear_button:
+            self.clear_button.setEnabled(not self._scan_active and not self._safe_scan_active)
+        if not self._scan_active and not self._safe_scan_active:
+            self.start_button.setEnabled(True)
+
+    def _update_mac_limited_label(self) -> None:
+        if not hasattr(self, "mac_limited_label"):
+            return
+        limited = self._is_macos_limited()
+        if limited:
+            self.mac_limited_label.setText(self._t("mac_limited_body"))
+            self.mac_limited_label.setVisible(True)
+        else:
+            self.mac_limited_label.clear()
+            self.mac_limited_label.setVisible(False)
+        self._result_grid.set_os_selection_allowed(
+            not limited,
+            tooltip=self._t("mac_limited_body"),
+        )
+
+    def _is_macos_limited(self) -> bool:
+        return sys.platform == "darwin" and not self._running_as_root()
+
+    def _running_as_root(self) -> bool:
+        geteuid = getattr(os, "geteuid", None)
+        if callable(geteuid):
+            return geteuid() == 0
+        return True
+
+    def _consume_placeholder_error(self, result: HostScanResult) -> bool:
+        if not result.is_placeholder:
+            return False
+        details = "\n".join(format_error_list(result.errors, self._language))
+        if not details:
+            details = self._t("placeholder_error_detail_missing")
+        QMessageBox.critical(
+            self,
+            self._t("placeholder_error_title").format(target=result.target),
+            self._t("placeholder_error_body").format(details=details),
+        )
+        self._summary_has_error = True
+        self._summary_status = self._t("placeholder_error_status")
+        self._update_summary()
+        return True
+
+    def _handle_fast_result(self, result: HostScanResult) -> None:
+        if self._consume_placeholder_error(result):
+            return
+        existing = self._result_lookup.get(result.target)
+        if existing:
+            self._merge_result(existing, result)
+            self._result_grid.update_result(existing)
+        else:
+            self._results.append(result)
+            self._result_lookup[result.target] = result
+            self._result_grid.update_result(result)
+
+    def _handle_advanced_result(self, result: HostScanResult) -> None:
+        if self._consume_placeholder_error(result):
+            return
+        existing = self._result_lookup.get(result.target)
+        if existing:
+            self._merge_result(existing, result)
+            self._result_grid.update_result(existing)
+        else:
+            self._results.append(result)
+            self._result_lookup[result.target] = result
+            self._result_grid.update_result(result)
+
+    def _announce_advanced_eta(self, target_count: int) -> None:
+        eta_seconds = self._estimate_parallel_total_seconds(
+            target_count,
+            float(self._settings.scan.advanced_timeout_seconds),
+            timeout_seconds=float(self._settings.scan.advanced_timeout_seconds),
+            parallelism=self._settings.scan.advanced_max_parallel,
+        )
+        self._job_eta.start(
+            kind="advanced",
+            expected_seconds=eta_seconds,
+            message_builder=self._build_advanced_eta_message,
+        )
+
+    def _build_advanced_eta_message(self, remaining: float) -> str:
+        eta_text = self._format_eta_seconds(remaining)
+        return self._t("advanced_running_status_eta").format(eta=eta_text)
+
+    def _build_safe_eta_message(self, remaining: float) -> str:
+        total = max(self._safe_scan_batch_total, 1)
+        done = min(self._safe_scan_completed, total)
+        eta_text = self._format_eta_seconds(remaining)
+        return self._t("safe_scan_progress_running_multi").format(
+            done=done,
+            total=total,
+            eta=eta_text,
+        )
+    def _build_advanced_config(self, targets: Sequence[str], *, include_os: bool) -> ScanConfig:
+        modes: Set[ScanMode] = {ScanMode.PORTS}
+        if include_os:
+            modes.add(ScanMode.OS)
+        return ScanConfig(
+            targets=tuple(targets),
+            scan_modes=modes,
+            port_list=self._settings.scan.port_scan_list,
+            timeout_seconds=self._settings.scan.advanced_timeout_seconds,
+            max_parallel=self._settings.scan.advanced_max_parallel,
+            detail_label="advanced",
+        )
+
+    def _format_eta_seconds(self, seconds: float) -> str:
+        total = max(int(round(seconds)), 0)
+        mins, secs = divmod(total, 60)
+        hours, mins = divmod(mins, 60)
+        if hours:
+            return f"{hours:d}:{mins:02d}:{secs:02d}"
+        return f"{mins:02d}:{secs:02d}"
+
+    def _estimate_parallel_total_seconds(
+        self,
+        job_count: int,
+        per_job_seconds: float,
+        *,
+        timeout_seconds: float,
+        parallelism: int,
+    ) -> float:
+        if job_count <= 0:
+            return 0.0
+        per_job = max(0.0, min(per_job_seconds, timeout_seconds))
+        slots = max(1, parallelism)
+        batches = math.ceil(job_count / slots)
+        return per_job * batches
+
+
+
+    def _record_safe_scan_duration(self, duration: float) -> None:
+        if duration <= 0:
+            return
+        self._safe_scan_history.append(duration)
+        if len(self._safe_scan_history) > self._settings.safe_scan.history_limit:
+            self._safe_scan_history.pop(0)
+        average = sum(self._safe_scan_history) / len(self._safe_scan_history)
+        timeout = float(self._settings.safe_scan.timeout_seconds)
+        baseline = float(self._settings.safe_scan.default_duration_seconds)
+        self._safe_scan_expected_duration = min(timeout, max(baseline, average))
+
+    def _on_safe_scan_started(self, total: int) -> None:
         self._safe_scan_active = True
-        self._safe_scan_target = target
+        self._safe_scan_batch_total = total
+        self._safe_scan_completed = 0
+        self._safe_scan_elapsed_start = time.monotonic()
         self.start_button.setEnabled(False)
         self.stop_button.setEnabled(False)
-        self.statusBar().showMessage(
-            self._t("safe_scan_status_running").format(target=target)
+        self._refresh_action_buttons()
+        per_host = max(self._safe_scan_expected_duration, 1.0)
+        expected = self._estimate_parallel_total_seconds(
+            total,
+            per_host,
+            timeout_seconds=float(self._settings.safe_scan.timeout_seconds),
+            parallelism=self._safe_scan_parallel,
         )
-        self._refresh_safe_scan_button_states()
-        self._start_safe_progress()
+        self._job_eta.start(
+            kind="safe",
+            expected_seconds=expected,
+            message_builder=self._build_safe_eta_message,
+        )
+
+    def _on_safe_scan_progress(self, done: int, total: int) -> None:
+        self._safe_scan_completed = done
+        self._safe_scan_batch_total = total
+        self._job_eta.refresh("safe")
 
     def _on_safe_scan_result(self, report: SafeScanReport) -> None:
+        self._set_diagnostics_status(report.target, "completed" if report.success else "failed")
+        self._result_grid.clear_safety_selection_for_target(report.target)
         dialog = SafeScanDialog(self, report, self._language)
         dialog.exec()
         if dialog.saved_path:
             self.statusBar().showMessage(
                 self._t("safe_scan_save_success_body").format(path=dialog.saved_path)
             )
+        self._record_safe_scan_duration(report.duration_seconds)
+        self._refresh_action_buttons()
 
     def _on_safe_scan_error(self, payload) -> None:
         message = str(payload)
@@ -807,24 +933,36 @@ class MainWindow(QMainWindow):
             self._t("safe_scan_error_body").format(message=message),
         )
         self.statusBar().showMessage(message)
+        self._summary_status = message
+        self._update_summary()
+        self._job_eta.stop("safe")
 
     def _on_safe_scan_finished(self) -> None:
         duration: float | None = None
         if self._safe_scan_elapsed_start is not None:
             duration = time.monotonic() - self._safe_scan_elapsed_start
+        completed_total = self._safe_scan_batch_total
         self._safe_scan_active = False
-        target = self._safe_scan_target or ""
-        self._safe_scan_target = None
+        self._safe_scan_targets = []
         if not self._scan_active:
             self.start_button.setEnabled(True)
         self.stop_button.setEnabled(self._scan_active)
+        self._refresh_action_buttons()
+        self._job_eta.stop("safe")
+        self._safe_scan_elapsed_start = None
         if not self._scan_active:
-            finished_message = self._t("safe_scan_status_finished").format(target=target)
+            if duration is not None and duration > 0:
+                finished_message = self._t("safe_scan_progress_complete_multi").format(
+                    seconds=int(round(duration)),
+                    total=max(completed_total, 1),
+                )
+            else:
+                finished_message = self._t("safe_scan_progress_finished")
             self.statusBar().showMessage(finished_message)
-        self._refresh_safe_scan_button_states()
-        self._complete_safe_progress(duration)
-        if duration is not None:
-            self._record_safe_scan_duration(duration)
+            self._summary_status = finished_message
+            self._update_summary()
+        self._safe_scan_batch_total = 0
+        self._safe_scan_completed = 0
 
     def _on_error(self, payload) -> None:
         if isinstance(payload, ErrorRecord):
@@ -836,11 +974,27 @@ class MainWindow(QMainWindow):
         self._summary_has_error = True
         self._summary_status = message
         self._update_summary()
+        self._job_eta.stop("advanced")
         if self._log_dialog:
             self._log_dialog.mark_scan_finished()
 
     def _on_finished(self) -> None:
+        completed_targets = list(self._current_scan_targets)
+        if self._active_scan_kind == "advanced" and completed_targets:
+            self._result_grid.clear_completed_advanced_selection(completed_targets)
+        if self._active_scan_kind == "advanced" and self._pending_scan_configs:
+            next_config = self._pending_scan_configs.pop(0)
+            self._current_scan_targets = list(next_config.targets)
+            self._announce_advanced_eta(len(next_config.targets))
+            self._ensure_log_dialog(next_config.targets, show=False, reset=True)
+            self._update_summary()
+            self._scan_manager.start(next_config)
+            return
+        self._job_eta.stop("advanced")
         self._scan_active = False
+        self._pending_scan_configs.clear()
+        self._active_scan_kind = None
+        self._current_scan_targets = []
         self.start_button.setEnabled(not self._safe_scan_active)
         self.stop_button.setEnabled(False)
         self.statusBar().showMessage(self._t("scan_finished"))
@@ -850,7 +1004,7 @@ class MainWindow(QMainWindow):
             else:
                 self._summary_status = self._t("summary_status_no_hosts")
         self._update_summary()
-        self._refresh_safe_scan_button_states()
+        self._refresh_action_buttons()
         if self._log_dialog:
             self._log_dialog.mark_scan_finished()
 
@@ -861,7 +1015,10 @@ class MainWindow(QMainWindow):
         self._scan_manager.stop()
         self._safe_scan_manager.stop()
         if self._log_dialog:
-            self._log_dialog.close()
+            self._log_dialog.deleteLater()
+            self._log_dialog = None
+        if self.log_button:
+            self.log_button.setEnabled(False)
         self._state_save_timer.stop()
         if not self._persist_state(on_close=True):
             event.ignore()
@@ -920,20 +1077,31 @@ class MainWindow(QMainWindow):
     def _apply_state_to_widgets(self) -> None:
         state = self._app_state
         self.target_input.setPlainText(state.targets_text)
-        self.icmp_checkbox.setChecked(state.icmp_enabled)
-        self.port_checkbox.setChecked(state.ports_enabled)
-        self.os_checkbox.setChecked(state.os_enabled)
         if state.window_geometry:
             try:
                 self.restoreGeometry(QByteArray(state.window_geometry))
             except TypeError:
                 pass
+        self._reset_result_storage()
+        self._result_grid.set_selections(
+            advanced=state.advanced_selected,
+            os_targets=state.os_selected,
+            safety=state.safety_selected,
+            emit_signal=False,
+        )
+        self._restore_results_from_state(state.results)
+
+    def _restore_results_from_state(self, stored: List[HostScanResult]) -> None:
+        if stored:
+            for item in stored:
+                result = copy.deepcopy(item)
+                self._results.append(result)
+                self._result_lookup[result.target] = result
+                self._result_grid.update_result(result, allow_sort_restore=False)
+        self._update_summary()
 
     def _connect_state_change_signals(self) -> None:
         self.target_input.textChanged.connect(self._on_form_state_changed)
-        self.icmp_checkbox.stateChanged.connect(self._on_form_state_changed)
-        self.port_checkbox.stateChanged.connect(self._on_form_state_changed)
-        self.os_checkbox.stateChanged.connect(self._on_form_state_changed)
 
     def _on_form_state_changed(self, *_args) -> None:
         if self._disable_state_persistence:
@@ -943,10 +1111,14 @@ class MainWindow(QMainWindow):
     def _collect_state_from_widgets(self) -> AppState:
         return AppState(
             targets_text=self.target_input.toPlainText(),
-            icmp_enabled=self.icmp_checkbox.isChecked(),
-            ports_enabled=self.port_checkbox.isChecked(),
-            os_enabled=self.os_checkbox.isChecked(),
+            icmp_enabled=True,
+            ports_enabled=True,
+            os_enabled=False,
             window_geometry=bytes(self.saveGeometry()),
+            results=copy.deepcopy(self._results),
+            advanced_selected=self._result_grid.advanced_targets(),
+            os_selected=self._result_grid.os_targets(),
+            safety_selected=self._result_grid.safety_targets(),
         )
 
     def _persist_state(self, state: AppState | None = None, *, on_close: bool = False) -> bool:
@@ -1033,19 +1205,25 @@ class MainWindow(QMainWindow):
         python_path = shlex.quote(str(Path(python).resolve()))
         return f"sudo {python_path} -m nmap_gui.main --debug"
 
-    def _ensure_log_dialog(self, targets: Sequence[str]) -> None:
+    def _ensure_log_dialog(self, targets: Sequence[str], *, show: bool, reset: bool = True) -> None:
         if self._log_dialog is None:
             self._log_dialog = ScanLogDialog(self, self._language)
             self._log_dialog.destroyed.connect(self._on_log_dialog_destroyed)
-        else:
+        if reset:
             self._log_dialog.reset()
-        self._log_dialog.set_initial_targets(targets)
-        self._log_dialog.show()
-        self._log_dialog.raise_()
-        self._log_dialog.activateWindow()
+        if targets:
+            self._log_dialog.set_initial_targets(targets)
+        if show:
+            self._log_dialog.show()
+            self._log_dialog.raise_()
+            self._log_dialog.activateWindow()
+        if self.log_button:
+            self.log_button.setEnabled(True)
 
     def _on_log_dialog_destroyed(self, _obj=None) -> None:
         self._log_dialog = None
+        if self.log_button:
+            self.log_button.setEnabled(False)
 
     def _on_log_event(self, event: ScanLogEvent) -> None:
         if not isinstance(event, ScanLogEvent):

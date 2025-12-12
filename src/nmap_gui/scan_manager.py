@@ -14,7 +14,7 @@ except ImportError:  # pragma: no cover - fallback for runtimes missing the clas
     class BrokenProcessPool(RuntimeError):  # type: ignore[override]
         """Compatibility placeholder so exception handling still works."""
 from multiprocessing.connection import Connection
-from typing import Dict, Optional
+from typing import Dict, Optional, Sequence
 
 from PySide6.QtCore import QObject, QThread, Signal, Slot
 
@@ -72,7 +72,10 @@ class ScanWorker(QObject):
             self._close_cancel_token()
             return
         ctx = self._mp_context
-        max_workers = min(total, os.cpu_count() or 1)
+        configured_max = self._config.max_parallel or (os.cpu_count() or 1)
+        max_workers = min(total, configured_max)
+        if max_workers <= 0:
+            max_workers = 1
         try:
             executor_kwargs = {"max_workers": max_workers}
             executor_cls = ThreadPoolExecutor if self._use_threads else ProcessPoolExecutor
@@ -92,6 +95,9 @@ class ScanWorker(QObject):
                             self._cancel_token,
                             log_callback,
                             self._settings,
+                            self._config.port_list,
+                            self._config.timeout_seconds,
+                            self._config.detail_label,
                         )
                     except Exception:
                         if connection is not None:
@@ -253,30 +259,54 @@ class ScanManager(QObject):
 
 
 class SafeScriptWorker(QObject):
+    progress = Signal(int, int)
     result_ready = Signal(object)
     error = Signal(object)
     finished = Signal()
 
-    def __init__(self, target: str, settings: AppSettings | None = None):
+    def __init__(self, targets: Sequence[str], settings: AppSettings | None = None):
         super().__init__()
-        self._target = target
+        self._targets = list(dict.fromkeys(targets))
         self._settings = settings or get_settings()
 
     @Slot()
     def start(self) -> None:
+        total = len(self._targets)
+        if total == 0:
+            self.finished.emit()
+            return
+        timeout = self._settings.safe_scan.timeout_seconds
+        max_workers = max(1, self._settings.safe_scan.max_parallel)
         try:
-            report = run_safe_script_scan(self._target, settings=self._settings)
-            self.result_ready.emit(report)
-        except Exception as exc:  # noqa: BLE001
-            self.error.emit(exc)
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {
+                    executor.submit(
+                        run_safe_script_scan,
+                        target,
+                        timeout,
+                        self._settings,
+                    ): target
+                    for target in self._targets
+                }
+                completed = 0
+                for future in as_completed(futures):
+                    try:
+                        report = future.result()
+                    except Exception as exc:  # noqa: BLE001
+                        self.error.emit(exc)
+                    else:
+                        self.result_ready.emit(report)
+                    completed += 1
+                    self.progress.emit(completed, total)
         finally:
             self.finished.emit()
 
 
 class SafeScriptManager(QObject):
+    progress = Signal(int, int)
     result_ready = Signal(object)
     error = Signal(object)
-    started = Signal(str)
+    started = Signal(int)
     finished = Signal()
 
     def __init__(self, settings: AppSettings | None = None) -> None:
@@ -285,20 +315,24 @@ class SafeScriptManager(QObject):
         self._thread: QThread | None = None
         self._worker: SafeScriptWorker | None = None
 
-    def start(self, target: str) -> None:
+    def start(self, targets: Sequence[str]) -> None:
         if self.is_running():
             return
+        unique_targets = list(dict.fromkeys(targets))
+        if not unique_targets:
+            return
         self._thread = QThread()
-        self._worker = SafeScriptWorker(target, self._settings)
+        self._worker = SafeScriptWorker(unique_targets, self._settings)
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.start)
         self._worker.result_ready.connect(self.result_ready)
         self._worker.error.connect(self.error)
+        self._worker.progress.connect(self.progress)
         self._worker.finished.connect(self._thread.quit)
         self._worker.finished.connect(self.finished)
         self._thread.finished.connect(self._cleanup_thread)
         self._thread.start()
-        self.started.emit(target)
+        self.started.emit(len(unique_targets))
 
     def stop(self) -> None:
         if self._thread and self._thread.isRunning():

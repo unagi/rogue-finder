@@ -5,9 +5,17 @@ import argparse
 import logging
 import multiprocessing as mp
 import sys
+from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
 from PySide6.QtWidgets import QMessageBox
+
+# PyInstaller executes main.py as a top-level script. When that happens
+# ``__package__`` is empty and the parent directory (project/src root) is not on
+# ``sys.path``. Add it so the ``nmap_gui`` package can be imported normally.
+if __package__ in (None, ""):
+    package_dir = Path(__file__).resolve().parent
+    sys.path.insert(0, str(package_dir.parent))
 
 try:
     from .gui import MainWindow  # type: ignore[attr-defined]
