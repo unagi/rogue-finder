@@ -979,7 +979,7 @@ class MainWindow(QMainWindow):
         dialog.setText(self._t("storage_warning_body"))
         dialog.setInformativeText(detail_text)
         continue_button = dialog.addButton(self._t("storage_warning_continue"), QMessageBox.ButtonRole.AcceptRole)
-        exit_button = dialog.addButton(self._t("storage_warning_exit"), QMessageBox.ButtonRole.RejectRole)
+        dialog.addButton(self._t("storage_warning_exit"), QMessageBox.ButtonRole.RejectRole)
         dialog.setDefaultButton(continue_button)
         dialog.exec()
         return dialog.clickedButton() is continue_button

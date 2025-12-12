@@ -6,6 +6,9 @@ pythonpath = ["src"]
 [tool.poe.tasks.test]
 cmd = "uv run pytest"
 
+[tool.poe.tasks.lint]
+cmd = "uv run ruff check src tests"
+
 [tool.poe.executor]
 type = "simple"
 
@@ -20,3 +23,7 @@ cmd = """
 """
 env.PYINSTALLER_CONFIG_DIR = "{project_root}/.pyinstaller"
 env.PYINSTALLER_CACHE_DIR = "{project_root}/.pyinstaller"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100

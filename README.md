@@ -67,7 +67,7 @@ The project intentionally keeps dependencies minimal to stay OSS-friendly and po
 The project standardizes on the [uv](https://docs.astral.sh/uv/) toolchain for fast, reproducible environments (Poe tasks call `uv run` internally).
 
 1. Install uv (see official docs for platform instructions)
-   - もしグローバルに `poe` コマンドを使いたい場合は `uv tool install poethepoet` の後に `uv tool update-shell` を実行すると PATH に追加できます。
+   - If you want the `poe` command available globally, run `uv tool install poethepoet` followed by `uv tool update-shell` so it is added to your PATH.
 2. Create and activate a virtual environment:
    ```bash
    uv venv

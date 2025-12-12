@@ -1,8 +1,6 @@
 """Tests for configuration loader behavior."""
 from __future__ import annotations
 
-from pathlib import Path
-
 import yaml
 
 from nmap_gui import config

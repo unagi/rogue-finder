@@ -3,8 +3,6 @@ from concurrent.futures import ProcessPoolExecutor
 
 from types import SimpleNamespace
 
-import pytest
-
 from nmap_gui.cancel_token import PipeCancelToken
 from nmap_gui import scan_manager
 
