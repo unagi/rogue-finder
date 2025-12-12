@@ -18,6 +18,7 @@ from typing import Dict, Optional
 
 from PySide6.QtCore import QObject, QThread, Signal, Slot
 
+from .config import AppSettings, get_settings
 from .error_codes import (
     ERROR_SCAN_CRASHED,
     ERROR_WORKER_POOL_FAILED,
@@ -50,9 +51,10 @@ class ScanWorker(QObject):
     finished = Signal()
     log_ready = Signal(object)
 
-    def __init__(self, config: ScanConfig):
+    def __init__(self, config: ScanConfig, settings: AppSettings | None = None):
         super().__init__()
         self._config = config
+        self._settings = settings or get_settings()
         self._mp_context = mp.get_context("spawn")
         self._cancel_tx: Optional[Connection] = None
         self._cancel_token: Optional[PipeCancelToken] = None
@@ -89,6 +91,7 @@ class ScanWorker(QObject):
                             self._config.scan_modes,
                             self._cancel_token,
                             log_callback,
+                            self._settings,
                         )
                     except Exception:
                         if connection is not None:
@@ -209,15 +212,16 @@ class ScanManager(QObject):
     finished = Signal()
     log_ready = Signal(object)
 
-    def __init__(self) -> None:
+    def __init__(self, settings: AppSettings | None = None) -> None:
         super().__init__()
+        self._settings = settings or get_settings()
         self._thread: QThread | None = None
         self._worker: ScanWorker | None = None
 
     def start(self, config: ScanConfig) -> None:
         self.stop()
         self._thread = QThread()
-        self._worker = ScanWorker(config)
+        self._worker = ScanWorker(config, self._settings)
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.start)
         self._worker.progress.connect(self.progress)
@@ -253,14 +257,15 @@ class SafeScriptWorker(QObject):
     error = Signal(object)
     finished = Signal()
 
-    def __init__(self, target: str):
+    def __init__(self, target: str, settings: AppSettings | None = None):
         super().__init__()
         self._target = target
+        self._settings = settings or get_settings()
 
     @Slot()
     def start(self) -> None:
         try:
-            report = run_safe_script_scan(self._target)
+            report = run_safe_script_scan(self._target, settings=self._settings)
             self.result_ready.emit(report)
         except Exception as exc:  # noqa: BLE001
             self.error.emit(exc)
@@ -274,8 +279,9 @@ class SafeScriptManager(QObject):
     started = Signal(str)
     finished = Signal()
 
-    def __init__(self) -> None:
+    def __init__(self, settings: AppSettings | None = None) -> None:
         super().__init__()
+        self._settings = settings or get_settings()
         self._thread: QThread | None = None
         self._worker: SafeScriptWorker | None = None
 
@@ -283,7 +289,7 @@ class SafeScriptManager(QObject):
         if self.is_running():
             return
         self._thread = QThread()
-        self._worker = SafeScriptWorker(target)
+        self._worker = SafeScriptWorker(target, self._settings)
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.start)
         self._worker.result_ready.connect(self.result_ready)

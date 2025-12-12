@@ -67,6 +67,8 @@ nmap -sn -PE <targets>
 8080, 8888, 11211, 15672, 50000
 ```
 
+
+※ 上記ポートセットは `rogue-finder.config.yaml` の `scan.port_scan_list` で編集可能。ファイルが存在しない場合は起動時に自動生成される。
 ### Phase 3：OS 推定
 ```
 nmap -O -Pn <targets>
@@ -110,6 +112,8 @@ nmap -O -Pn <targets>
 | 条件 | 点数 |
 |------|------|
 | 50000 が開いている | +1 |
+
+※ これらのレーティング設定（ICMP/ポート/OS/コンボ/優先度）は `rogue-finder.config.yaml` の `rating` セクションで外部化されており、ファイルを編集することでビルド無しで調整できる。
 
 ---
 

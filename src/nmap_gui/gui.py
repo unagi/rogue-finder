@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .config import AppSettings, get_settings
 from .exporters import export_csv, export_json
 from .i18n import detect_language, format_error_list, format_error_record, translate
 from .models import (
@@ -50,17 +51,12 @@ from .scan_manager import SafeScriptManager, ScanManager
 from .utils import slugify_filename_component
 
 
-PRIORITY_COLORS = {
+SAFE_SCAN_COLUMN_INDEX = 7
+DEFAULT_PRIORITY_COLORS = {
     "High": QColor(255, 204, 204),
     "Medium": QColor(255, 240, 210),
     "Low": QColor(210, 235, 255),
 }
-
-SAFE_SCAN_COLUMN_INDEX = 7
-SAFE_SCAN_DEFAULT_DURATION = 120.0  # seconds
-SAFE_SCAN_HISTORY_LIMIT = 20
-SAFE_PROGRESS_UPDATE_MS = 500
-SAFE_PROGRESS_VISIBILITY_MS = 4000
 
 
 class SafeScanDialog(QDialog):
@@ -359,8 +355,9 @@ class ScanLogDialog(QDialog):
 class MainWindow(QMainWindow):
     """Primary top-level window."""
 
-    def __init__(self) -> None:
+    def __init__(self, settings: AppSettings | None = None) -> None:
         super().__init__()
+        self._settings = settings or get_settings()
         self._language = detect_language()
         self._priority_labels = {
             "High": translate("priority_high", self._language),
@@ -370,8 +367,8 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(self._t("window_title"))
         self.resize(1000, 700)
         self._results: List[HostScanResult] = []
-        self._scan_manager = ScanManager()
-        self._safe_scan_manager = SafeScriptManager()
+        self._scan_manager = ScanManager(self._settings)
+        self._safe_scan_manager = SafeScriptManager(self._settings)
         self._sort_column: int | None = None
         self._sort_order = Qt.AscendingOrder
         self.summary_label: QLabel | None = None
@@ -382,7 +379,7 @@ class MainWindow(QMainWindow):
         self._safe_scan_active = False
         self._scan_active = False
         self._safe_scan_target: str | None = None
-        self._safe_scan_expected_duration = SAFE_SCAN_DEFAULT_DURATION
+        self._safe_scan_expected_duration = self._settings.safe_scan.default_duration_seconds
         self._safe_scan_history: List[float] = []
         self._safe_scan_elapsed_start: float | None = None
         self._safe_progress_timer = QTimer(self)
@@ -641,13 +638,19 @@ class MainWindow(QMainWindow):
         return item
 
     def _apply_row_style(self, row: int, priority: str) -> None:
-        color = PRIORITY_COLORS.get(priority)
+        color = self._priority_color(priority)
         if not color:
             return
         for col in range(self.table.columnCount()):
             item = self.table.item(row, col)
             if item:
                 item.setBackground(color)
+
+    def _priority_color(self, priority: str) -> QColor | None:
+        color_hex = self._settings.ui.priority_colors.get(priority)
+        if color_hex:
+            return QColor(color_hex)
+        return DEFAULT_PRIORITY_COLORS.get(priority)
 
     def _add_safe_scan_button(self, row: int, target: str) -> None:
         button = QPushButton(self._t("safe_scan_button"))
@@ -686,7 +689,7 @@ class MainWindow(QMainWindow):
         self._update_safe_progress_label(0.0)
         self._ensure_safe_progress_visible()
         if not self._safe_progress_timer.isActive():
-            self._safe_progress_timer.start(SAFE_PROGRESS_UPDATE_MS)
+            self._safe_progress_timer.start(self._settings.safe_scan.progress_update_ms)
 
     def _on_safe_progress_tick(self) -> None:
         if not self._safe_scan_active or self._safe_scan_elapsed_start is None:
@@ -694,7 +697,7 @@ class MainWindow(QMainWindow):
         elapsed = time.monotonic() - self._safe_scan_elapsed_start
         expected = self._safe_scan_expected_duration
         if expected <= 0:
-            expected = SAFE_SCAN_DEFAULT_DURATION
+            expected = self._settings.safe_scan.default_duration_seconds
         fraction = min((elapsed / expected) * 0.9, 0.9)
         progress = int(fraction * 100)
         self.safe_progress_bar.setValue(progress)
@@ -704,7 +707,8 @@ class MainWindow(QMainWindow):
         remaining = max(self._safe_scan_expected_duration - elapsed_seconds, 0)
         mins, secs = divmod(int(round(remaining)), 60)
         eta = f"{mins:02d}:{secs:02d}"
-        avg_seconds = max(self._safe_scan_expected_duration, SAFE_SCAN_DEFAULT_DURATION)
+        baseline = self._settings.safe_scan.default_duration_seconds
+        avg_seconds = max(self._safe_scan_expected_duration, baseline)
         self.safe_progress_label.setText(
             self._t("safe_scan_progress_running").format(eta=eta, avg=int(round(avg_seconds)))
         )
@@ -718,15 +722,16 @@ class MainWindow(QMainWindow):
             )
         else:
             self.safe_progress_label.setText(self._t("safe_scan_progress_finished"))
-        QTimer.singleShot(SAFE_PROGRESS_VISIBILITY_MS, self._hide_safe_progress)
+        QTimer.singleShot(self._settings.safe_scan.progress_visibility_ms, self._hide_safe_progress)
         self._safe_scan_elapsed_start = None
 
     def _record_safe_scan_duration(self, duration: float) -> None:
         self._safe_scan_history.append(duration)
-        if len(self._safe_scan_history) > SAFE_SCAN_HISTORY_LIMIT:
+        if len(self._safe_scan_history) > self._settings.safe_scan.history_limit:
             self._safe_scan_history.pop(0)
         average = sum(self._safe_scan_history) / len(self._safe_scan_history)
-        self._safe_scan_expected_duration = max(SAFE_SCAN_DEFAULT_DURATION, average)
+        baseline = self._settings.safe_scan.default_duration_seconds
+        self._safe_scan_expected_duration = max(baseline, average)
 
     def _handle_sort_request(self, column: int) -> None:
         if self._sort_column == column:
