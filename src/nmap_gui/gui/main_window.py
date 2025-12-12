@@ -91,7 +91,7 @@ class MainWindow(QMainWindow):
         self._job_eta = JobEtaController(
             self,
             self.statusBar().showMessage,
-            self._set_summary_message,
+            summary_callback=None,
         )
         self._safe_scan_controller = SafeScanController(
             settings=self._settings,
@@ -99,7 +99,7 @@ class MainWindow(QMainWindow):
             parent=self,
             job_eta=self._job_eta,
             status_callback=self.statusBar().showMessage,
-            set_summary_message=self._set_summary_message,
+            set_summary_state=self._set_summary_state,
             refresh_actions=self._refresh_action_buttons,
             is_scan_active=lambda: self._scan_active,
             set_diagnostics_status=self._set_diagnostics_status,
@@ -158,8 +158,8 @@ class MainWindow(QMainWindow):
             status=self._summary_status,
         )
 
-    def _set_summary_message(self, message: str) -> None:
-        self._summary_status = message
+    def _set_summary_state(self, translation_key: str) -> None:
+        self._summary_status = self._t(translation_key)
         self._update_summary()
 
     def _on_start_clicked(self) -> None:
@@ -173,10 +173,9 @@ class MainWindow(QMainWindow):
             return
         self._target_count = len(targets)
         self._requested_host_estimate = self._estimate_requested_hosts(targets)
-        self._summary_status = self._t("scanning")
         self._summary_has_error = False
         self._reset_result_storage(emit_selection_changed=False)
-        self._update_summary()
+        self._set_summary_state("summary_status_scanning")
         config = ScanConfig(
             targets=targets,
             scan_modes={ScanMode.ICMP, ScanMode.PORTS},
@@ -191,7 +190,12 @@ class MainWindow(QMainWindow):
         self._scan_manager.start(config)
         self._scan_active = True
         self._update_controls_state()
-        self.statusBar().showMessage(self._t("scanning"))
+        self.statusBar().showMessage(
+            self._t("fast_scan_running_status").format(
+                count=self._target_count,
+                hosts=self._requested_host_estimate,
+            )
+        )
         self._refresh_action_buttons()
 
     def _on_clear_results(self) -> None:
@@ -214,11 +218,11 @@ class MainWindow(QMainWindow):
         if reply != QMessageBox.Yes:
             return
         self._reset_result_storage()
-        self._update_summary()
+        self._set_summary_state("summary_status_idle")
         self._on_form_state_changed()
         self._refresh_action_buttons()
 
-    def _on_run_advanced_clicked(self) -> None:
+    def _on_run_advanced_clicked(self, include_os: bool = False) -> None:
         if self._scan_active or self._safe_scan_controller.is_active():
             QMessageBox.information(
                 self,
@@ -234,31 +238,21 @@ class MainWindow(QMainWindow):
                 self._t("advanced_missing_body"),
             )
             return
-        os_selection = self._result_grid.os_targets()
-        os_targets = sorted(os_selection)
-        base_targets = sorted(advanced_targets - os_selection)
-        configs: List[ScanConfig] = []
-        if base_targets:
-            configs.append(self._build_advanced_config(base_targets, include_os=False))
-        if os_targets:
-            if not has_required_privileges({ScanMode.OS}):
-                show_privileged_hint(self, self._t)
-            else:
-                configs.append(self._build_advanced_config(os_targets, include_os=True))
-        if not configs:
+        if include_os and not has_required_privileges({ScanMode.OS}):
+            show_privileged_hint(self, self._t)
             return
-        first = configs[0]
-        self._pending_scan_configs = configs[1:]
+        targets = sorted(advanced_targets)
+        config = self._build_advanced_config(targets, include_os=include_os)
+        self._pending_scan_configs = []
         self._active_scan_kind = "advanced"
-        self._current_scan_targets = list(first.targets)
+        self._current_scan_targets = list(config.targets)
         self._scan_active = True
         self._update_controls_state()
         self.statusBar().showMessage(self._t("advanced_running_status"))
-        self._summary_status = self._t("advanced_running_status")
-        self._update_summary()
-        self._announce_advanced_eta(len(first.targets))
-        self._ensure_log_dialog(first.targets, show=False, reset=True)
-        self._scan_manager.start(first)
+        self._set_summary_state("summary_status_advanced")
+        self._announce_advanced_eta(len(config.targets))
+        self._ensure_log_dialog(config.targets, show=False, reset=True)
+        self._scan_manager.start(config)
         self._refresh_action_buttons()
 
     def _on_run_safety_clicked(self) -> None:
@@ -302,10 +296,9 @@ class MainWindow(QMainWindow):
         self._active_scan_kind = None
         self._current_scan_targets = []
         self.statusBar().showMessage(self._t("scan_stopped"))
-        self._summary_status = self._t("scan_stopped")
         self._scan_active = False
+        self._set_summary_state("summary_status_stopped")
         self._job_eta.stop("advanced")
-        self._update_summary()
         self._refresh_action_buttons()
         if self._log_dialog:
             self._log_dialog.mark_scan_finished()
@@ -361,10 +354,7 @@ class MainWindow(QMainWindow):
         limited = sys.platform == "darwin" and not has_required_privileges({ScanMode.OS})
         message = self._t("mac_limited_body")
         self._summary_panel.set_mac_limited(limited, message)
-        self._result_grid.set_os_selection_allowed(
-            not limited,
-            tooltip=message,
-        )
+        self._result_grid.set_os_button_allowed(not limited, tooltip=message if limited else "")
 
     def _consume_placeholder_error(self, result: HostScanResult) -> bool:
         if not result.is_placeholder:
@@ -378,8 +368,7 @@ class MainWindow(QMainWindow):
             self._t("placeholder_error_body").format(details=details),
         )
         self._summary_has_error = True
-        self._summary_status = self._t("placeholder_error_status")
-        self._update_summary()
+        self._set_summary_state("placeholder_error_status")
         return True
 
     def _handle_fast_result(self, result: HostScanResult) -> None:
@@ -456,8 +445,7 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, self._t("scan_error_title"), message)
         self.statusBar().showMessage(message)
         self._summary_has_error = True
-        self._summary_status = message
-        self._update_summary()
+        self._set_summary_state("summary_status_error")
         self._job_eta.stop("advanced")
         if self._log_dialog:
             self._log_dialog.mark_scan_finished()
@@ -471,7 +459,6 @@ class MainWindow(QMainWindow):
             self._current_scan_targets = list(next_config.targets)
             self._announce_advanced_eta(len(next_config.targets))
             self._ensure_log_dialog(next_config.targets, show=False, reset=True)
-            self._update_summary()
             self._scan_manager.start(next_config)
             return
         self._job_eta.stop("advanced")
@@ -482,10 +469,11 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(self._t("scan_finished"))
         if not self._summary_has_error:
             if self._result_store.has_results():
-                self._summary_status = self._t("scan_finished")
+                self._set_summary_state("summary_status_finished")
             else:
-                self._summary_status = self._t("summary_status_no_hosts")
-        self._update_summary()
+                self._set_summary_state("summary_status_no_hosts")
+        else:
+            self._update_summary()
         self._refresh_action_buttons()
         if self._log_dialog:
             self._log_dialog.mark_scan_finished()

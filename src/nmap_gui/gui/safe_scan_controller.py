@@ -25,7 +25,7 @@ class SafeScanController:
         parent: QWidget,
         job_eta: JobEtaController,
         status_callback: Callable[[str], None],
-        set_summary_message: Callable[[str], None],
+        set_summary_state: Callable[[str], None],
         refresh_actions: Callable[[], None],
         is_scan_active: Callable[[], bool],
         set_diagnostics_status: Callable[[str, str], None],
@@ -38,7 +38,7 @@ class SafeScanController:
         self._parent = parent
         self._job_eta = job_eta
         self._status_callback = status_callback
-        self._set_summary_message = set_summary_message
+        self._set_summary_state = set_summary_state
         self._refresh_actions = refresh_actions
         self._is_scan_active = is_scan_active
         self._set_diagnostics_status = set_diagnostics_status
@@ -102,6 +102,7 @@ class SafeScanController:
             expected_seconds=expected,
             message_builder=self._build_eta_message,
         )
+        self._set_summary_state("summary_status_safe_running")
 
     def _on_progress(self, done: int, total: int) -> None:
         self._completed = done
@@ -129,7 +130,7 @@ class SafeScanController:
             self._translator("safe_scan_error_body").format(message=message),
         )
         self._status_callback(message)
-        self._set_summary_message(message)
+        self._set_summary_state("summary_status_error")
         self._job_eta.stop("safe")
 
     def _on_finished(self) -> None:
@@ -152,7 +153,7 @@ class SafeScanController:
             else:
                 finished_message = self._translator("safe_scan_progress_finished")
             self._status_callback(finished_message)
-            self._set_summary_message(finished_message)
+            self._set_summary_state("summary_status_safe_finished")
 
     def _build_eta_message(self, remaining: float) -> str:
         total = max(self._batch_total, 1)

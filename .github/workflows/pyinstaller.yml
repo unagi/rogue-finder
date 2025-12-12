@@ -48,7 +48,8 @@ jobs:
             --noconfirm \
             --onefile \
             --windowed \
-            --uac-admin
+            --uac-admin \
+            --icon assets/icons/rogue-finder.ico
 
       - name: Normalize artifact layout
         shell: bash
@@ -101,7 +102,8 @@ jobs:
             --name rogue-finder \
             --noconfirm \
             --onefile \
-            --windowed
+            --windowed \
+            --icon assets/icons/rogue-finder.icns
 
       - name: Normalize artifact layout
         shell: bash

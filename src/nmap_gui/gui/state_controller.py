@@ -49,7 +49,6 @@ class StateController:
         result_store.reset(emit_selection_changed=False)
         result_grid.set_selections(
             advanced=state.advanced_selected,
-            os_targets=state.os_selected,
             safety=state.safety_selected,
             emit_signal=False,
         )
@@ -64,7 +63,6 @@ class StateController:
             window_geometry=bytes(window.saveGeometry()),
             results=result_store.snapshot_results(),
             advanced_selected=result_grid.advanced_targets(),
-            os_selected=result_grid.os_targets(),
             safety_selected=result_grid.safety_targets(),
         )
 
