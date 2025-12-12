@@ -5,6 +5,7 @@ import multiprocessing as mp
 import os
 import sys
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from contextlib import suppress
 from functools import partial
 from threading import Thread
 
@@ -32,10 +33,8 @@ from .cancel_token import PipeCancelToken, create_pipe_cancel_token
 def _send_log_event(connection: Connection | None, event: ScanLogEvent) -> None:
     if connection is None:
         return
-    try:
+    with suppress(BrokenPipeError, OSError):
         connection.send(event)
-    except (BrokenPipeError, OSError):
-        pass
 
 
 def _should_use_threads() -> bool:
@@ -65,86 +64,17 @@ class ScanWorker(QObject):
 
     @Slot()
     def start(self) -> None:
-        targets = list(dict.fromkeys(self._config.targets))
+        targets = self._prepare_targets()
         total = len(targets)
         if not targets:
             self.finished.emit()
             self._close_cancel_token()
             return
-        ctx = self._mp_context
-        configured_max = self._config.max_parallel or (os.cpu_count() or 1)
-        max_workers = min(total, configured_max)
-        if max_workers <= 0:
-            max_workers = 1
+        executor_cls, executor_kwargs = self._executor_config(total)
         try:
-            executor_kwargs = {"max_workers": max_workers}
-            executor_cls = ThreadPoolExecutor if self._use_threads else ProcessPoolExecutor
-            if not self._use_threads:
-                executor_kwargs["mp_context"] = ctx
             with executor_cls(**executor_kwargs) as executor:
-                futures: Dict[object, str] = {}
-                log_channels: Dict[object, Connection] = {}
-                for target in targets:
-                    connection = self._create_log_channel()
-                    log_callback = partial(_send_log_event, connection) if connection else None
-                    try:
-                        future = executor.submit(
-                            run_full_scan,
-                            target,
-                            self._config.scan_modes,
-                            self._cancel_token,
-                            log_callback,
-                            self._settings,
-                            self._config.port_list,
-                            self._config.timeout_seconds,
-                            self._config.detail_label,
-                        )
-                    except Exception:
-                        if connection is not None:
-                            try:
-                                connection.close()
-                            except OSError:
-                                pass
-                        raise
-                    futures[future] = target
-                    if connection is not None:
-                        log_channels[future] = connection
-                completed = 0
-                for future in as_completed(futures):
-                    if self._cancel_token and self._cancel_token.is_set():
-                        break
-                    try:
-                        result = future.result()
-                        if isinstance(result, list):
-                            for payload in result:
-                                self.result_ready.emit(payload)
-                        else:
-                            self.result_ready.emit(result)
-                    except BrokenProcessPool as exc:
-                        self.error.emit(
-                            build_error(
-                                ERROR_WORKER_POOL_FAILED,
-                                detail=str(exc),
-                            )
-                        )
-                        break
-                    except Exception as exc:  # noqa: BLE001
-                        self.error.emit(build_error(ERROR_SCAN_CRASHED, detail=str(exc)))
-                    completed += 1
-                    self.progress.emit(completed, total)
-                    if self._cancel_token and self._cancel_token.is_set():
-                        break
-                    conn = log_channels.pop(future, None)
-                    if conn is not None:
-                        try:
-                            conn.close()
-                        except OSError:
-                            pass
-                for conn in log_channels.values():
-                    try:
-                        conn.close()
-                    except OSError:
-                        pass
+                futures, log_channels = self._submit_targets(executor, targets)
+                self._consume_futures(futures, log_channels, total)
         finally:
             self.finished.emit()
             self._close_cancel_token()
@@ -152,10 +82,8 @@ class ScanWorker(QObject):
 
     def request_stop(self) -> None:
         if self._cancel_tx is not None:
-            try:
+            with suppress(OSError, BrokenPipeError):
                 self._cancel_tx.send(True)
-            except (OSError, BrokenPipeError):
-                pass
 
     def _init_cancel_token(self) -> None:
         tx, token = create_pipe_cancel_token(self._mp_context)
@@ -186,28 +114,109 @@ class ScanWorker(QObject):
             while True:
                 try:
                     event = connection.recv()
-                except EOFError:
-                    break
-                except (OSError, ValueError):
+                except (EOFError, OSError, ValueError):
                     break
                 else:
                     self.log_ready.emit(event)
         finally:
-            try:
+            with suppress(OSError):
                 connection.close()
-            except OSError:
-                pass
 
     def _close_log_receivers(self) -> None:
         for conn in self._log_receivers:
-            try:
+            with suppress(OSError):
                 conn.close()
-            except OSError:
-                pass
         self._log_receivers.clear()
         for thread in self._log_threads:
             thread.join(timeout=0.1)
         self._log_threads.clear()
+
+    def _prepare_targets(self) -> list[str]:
+        return list(dict.fromkeys(self._config.targets))
+
+    def _executor_config(
+        self, total: int
+    ) -> tuple[type[ThreadPoolExecutor] | type[ProcessPoolExecutor], Dict[str, object]]:
+        configured_max = self._config.max_parallel or (os.cpu_count() or 1)
+        max_workers = max(1, min(total, configured_max))
+        executor_kwargs: Dict[str, object] = {"max_workers": max_workers}
+        executor_cls = ThreadPoolExecutor if self._use_threads else ProcessPoolExecutor
+        if not self._use_threads:
+            executor_kwargs["mp_context"] = self._mp_context
+        return executor_cls, executor_kwargs
+
+    def _submit_targets(
+        self,
+        executor,
+        targets: Sequence[str],
+    ) -> tuple[Dict[object, str], Dict[object, Connection]]:
+        futures: Dict[object, str] = {}
+        log_channels: Dict[object, Connection] = {}
+        for target in targets:
+            connection = self._create_log_channel()
+            log_callback = partial(_send_log_event, connection) if connection else None
+            try:
+                future = executor.submit(
+                    run_full_scan,
+                    target,
+                    self._config.scan_modes,
+                    self._cancel_token,
+                    log_callback,
+                    self._settings,
+                    self._config.port_list,
+                    self._config.timeout_seconds,
+                    self._config.detail_label,
+                )
+            except Exception:
+                if connection is not None:
+                    with suppress(OSError):
+                        connection.close()
+                raise
+            futures[future] = target
+            if connection is not None:
+                log_channels[future] = connection
+        return futures, log_channels
+
+    def _consume_futures(
+        self,
+        futures: Dict[object, str],
+        log_channels: Dict[object, Connection],
+        total: int,
+    ) -> None:
+        for completed, future in enumerate(as_completed(futures), start=1):
+            if self._cancelled():
+                break
+            try:
+                result = future.result()
+                if isinstance(result, list):
+                    for payload in result:
+                        self.result_ready.emit(payload)
+                else:
+                    self.result_ready.emit(result)
+            except BrokenProcessPool as exc:
+                self.error.emit(
+                    build_error(
+                        ERROR_WORKER_POOL_FAILED,
+                        detail=str(exc),
+                    )
+                )
+                break
+            except Exception as exc:  # noqa: BLE001
+                self.error.emit(build_error(ERROR_SCAN_CRASHED, detail=str(exc)))
+            self.progress.emit(completed, total)
+            if self._cancelled():
+                break
+            self._close_single_log_channel(log_channels.pop(future, None))
+        for conn in log_channels.values():
+            self._close_single_log_channel(conn)
+
+    def _close_single_log_channel(self, connection: Connection | None) -> None:
+        if connection is not None:
+            with suppress(OSError):
+                connection.close()
+
+    def _cancelled(self) -> bool:
+        return bool(self._cancel_token and self._cancel_token.is_set())
 
 
 class ScanManager(QObject):
@@ -288,15 +297,13 @@ class SafeScriptWorker(QObject):
                     ): target
                     for target in self._targets
                 }
-                completed = 0
-                for future in as_completed(futures):
+                for completed, future in enumerate(as_completed(futures), start=1):
                     try:
                         report = future.result()
                     except Exception as exc:  # noqa: BLE001
                         self.error.emit(exc)
                     else:
                         self.result_ready.emit(report)
-                    completed += 1
                     self.progress.emit(completed, total)
         finally:
             self.finished.emit()

@@ -1,6 +1,7 @@
 """Inter-process cancellation primitives that avoid Qt dependencies."""
 from __future__ import annotations
 
+from contextlib import suppress
 from multiprocessing.connection import Connection
 from typing import Tuple
 
@@ -19,10 +20,8 @@ class PipeCancelToken:
             return True
 
     def close(self) -> None:
-        try:
+        with suppress(OSError):
             self._connection.close()
-        except OSError:
-            pass
 
 
 def create_pipe_cancel_token(context) -> Tuple[Connection, PipeCancelToken]:
