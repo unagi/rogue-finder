@@ -13,10 +13,8 @@ from pathlib import Path
 from typing import Dict, List, Sequence, Set
 
 from PySide6.QtCore import QByteArray, Qt, QTimer
-from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QApplication,
-    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -30,8 +28,6 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
-    QTableWidget,
-    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -39,6 +35,8 @@ from PySide6.QtWidgets import (
 from .config import AppSettings, get_settings
 from .exporters import export_csv, export_json
 from .i18n import detect_language, format_error_list, format_error_record, translate
+from .job_eta import JobEtaController
+from .result_grid import ResultGrid
 from .models import (
     ErrorRecord,
     HostScanResult,
@@ -52,24 +50,6 @@ from .scan_manager import SafeScriptManager, ScanManager
 from .state_store import AppState, load_state, save_state
 from .storage_warnings import StorageWarning, consume_storage_warnings
 from .utils import slugify_filename_component
-
-
-TARGET_COLUMN_INDEX = 0
-ALIVE_COLUMN_INDEX = 1
-PORTS_COLUMN_INDEX = 2
-OS_COLUMN_INDEX = 3
-SCORE_COLUMN_INDEX = 4
-PRIORITY_COLUMN_INDEX = 5
-ERROR_COLUMN_INDEX = 6
-ADVANCED_COLUMN_INDEX = 7
-OS_OPTION_COLUMN_INDEX = 8
-SAFETY_COLUMN_INDEX = 9
-DIAGNOSTICS_COLUMN_INDEX = 10
-DEFAULT_PRIORITY_COLORS = {
-    "High": QColor(255, 204, 204),
-    "Medium": QColor(255, 240, 210),
-    "Low": QColor(210, 235, 255),
-}
 
 
 class SafeScanDialog(QDialog):
@@ -363,14 +343,6 @@ class ScanLogDialog(QDialog):
     def _t(self, key: str) -> str:
         return translate(key, self._language)
 
-    def _format_eta_seconds(self, seconds: float) -> str:
-        total = max(int(round(seconds)), 0)
-        mins, secs = divmod(total, 60)
-        hours, mins = divmod(mins, 60)
-        if hours:
-            return f"{hours:d}:{mins:02d}:{secs:02d}"
-        return f"{mins:02d}:{secs:02d}"
-
     def closeEvent(self, event) -> None:  # type: ignore[override]
         """Hide instead of destroying so MainWindow can re-open the dialog."""
         event.ignore()
@@ -392,25 +364,23 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(self._t("window_title"))
         self.resize(1000, 700)
         self._results: List[HostScanResult] = []
-        self._result_index: Dict[str, int] = {}
         self._result_lookup: Dict[str, HostScanResult] = {}
-        self._row_checkboxes: Dict[str, Dict[str, QCheckBox]] = {}
-        self._advanced_selection: Set[str] = set()
-        self._os_selection: Set[str] = set()
-        self._safety_selection: Set[str] = set()
         self._pending_scan_configs: List[ScanConfig] = []
         self._active_scan_kind: str | None = None
         self._current_scan_targets: List[str] = []
-        self.advanced_select_all_checkbox: QCheckBox | None = None
-        self.os_select_all_checkbox: QCheckBox | None = None
-        self.safety_select_all_checkbox: QCheckBox | None = None
-        self.run_advanced_button: QPushButton | None = None
-        self.run_safety_button: QPushButton | None = None
         self.log_button: QPushButton | None = None
+        self._result_grid = ResultGrid(
+            translator=self._t,
+            language=self._language,
+            priority_labels=self._priority_labels,
+            priority_colors=self._settings.ui.priority_colors,
+            parent=self,
+        )
+        self._result_grid.selectionChanged.connect(self._on_result_grid_selection_changed)
+        self._result_grid.runAdvancedRequested.connect(self._on_run_advanced_clicked)
+        self._result_grid.runSafetyRequested.connect(self._on_run_safety_clicked)
         self._scan_manager = ScanManager(self._settings)
         self._safe_scan_manager = SafeScriptManager(self._settings)
-        self._sort_column: int | None = None
-        self._sort_order = Qt.AscendingOrder
         self.summary_label: QLabel | None = None
         self._target_count = 0
         self._requested_host_estimate = 0
@@ -418,21 +388,13 @@ class MainWindow(QMainWindow):
         self._summary_has_error = False
         self._safe_scan_active = False
         self._scan_active = False
-        self._safe_scan_expected_duration = float(self._settings.safe_scan.timeout_seconds)
+        self._safe_scan_expected_duration = float(self._settings.safe_scan.default_duration_seconds)
         self._safe_scan_history: List[float] = []
         self._safe_scan_elapsed_start: float | None = None
         self._safe_scan_targets: List[str] = []
         self._safe_scan_batch_total = 0
-        self._safe_scan_batch_expected_duration = 0.0
         self._safe_scan_completed = 0
         self._safe_scan_parallel = max(1, self._settings.safe_scan.max_parallel)
-        self._advanced_eta_timer = QTimer(self)
-        self._advanced_eta_timer.setInterval(1000)
-        self._advanced_eta_timer.timeout.connect(self._on_advanced_eta_tick)
-        self._advanced_eta_started_at: float | None = None
-        self._advanced_eta_expected_seconds = 0.0
-        self._safe_progress_timer = QTimer(self)
-        self._safe_progress_timer.timeout.connect(self._on_safe_progress_tick)
         self._state_save_timer = QTimer(self)
         self._state_save_timer.setSingleShot(True)
         self._state_save_timer.setInterval(750)
@@ -443,6 +405,11 @@ class MainWindow(QMainWindow):
         self._setup_scan_manager()
         self._setup_safe_scan_manager()
         self._build_ui()
+        self._job_eta = JobEtaController(
+            self,
+            self.statusBar().showMessage,
+            self._set_summary_message,
+        )
         self._apply_state_to_widgets()
         self._update_mac_limited_label()
         self._connect_state_change_signals()
@@ -468,8 +435,7 @@ class MainWindow(QMainWindow):
         central = QWidget()
         layout = QVBoxLayout(central)
         layout.addWidget(self._create_settings_panel())
-        layout.addWidget(self._create_table())
-        layout.addLayout(self._create_table_action_bar())
+        layout.addWidget(self._result_grid.widget())
         layout.addWidget(self._create_summary_panel())
         layout.addLayout(self._create_export_bar())
         self.setCentralWidget(central)
@@ -512,63 +478,6 @@ class MainWindow(QMainWindow):
 
         return group
 
-    def _create_table(self) -> QWidget:
-        self.table = QTableWidget(0, 11)
-        self.table.setHorizontalHeaderLabels(
-            [
-                self._t("table_target"),
-                self._t("table_alive"),
-                self._t("table_ports"),
-                self._t("table_os"),
-                self._t("table_score"),
-                self._t("table_priority"),
-                self._t("table_errors"),
-                self._t("table_advanced"),
-                self._t("table_os_option"),
-                self._t("table_safety"),
-                self._t("table_diagnostics_status"),
-            ]
-        )
-        header = self.table.horizontalHeader()
-        header.setStretchLastSection(True)
-        header.setSortIndicatorShown(False)
-        header.setSectionsClickable(True)
-        header.sectionClicked.connect(self._handle_sort_request)
-        self.table.setSortingEnabled(False)
-        self.table.setWordWrap(False)
-        self.table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
-        return self.table
-
-    def _create_table_action_bar(self) -> QHBoxLayout:
-        bar = QHBoxLayout()
-        bar.addWidget(QLabel(self._t("advanced_select_label")))
-        self.advanced_select_all_checkbox = QCheckBox(self._t("select_all"))
-        self.advanced_select_all_checkbox.stateChanged.connect(
-            lambda state: self._toggle_all_checkboxes("advanced", state)
-        )
-        bar.addWidget(self.advanced_select_all_checkbox)
-        self.os_select_all_checkbox = QCheckBox(self._t("select_all_os"))
-        self.os_select_all_checkbox.stateChanged.connect(
-            lambda state: self._toggle_all_checkboxes("os", state)
-        )
-        bar.addWidget(self.os_select_all_checkbox)
-        self.run_advanced_button = QPushButton(self._t("run_advanced_button"))
-        self.run_advanced_button.clicked.connect(self._on_run_advanced_clicked)
-        bar.addWidget(self.run_advanced_button)
-        bar.addSpacing(20)
-        bar.addWidget(QLabel(self._t("safety_select_label")))
-        self.safety_select_all_checkbox = QCheckBox(self._t("select_all"))
-        self.safety_select_all_checkbox.stateChanged.connect(
-            lambda state: self._toggle_all_checkboxes("safety", state)
-        )
-        bar.addWidget(self.safety_select_all_checkbox)
-        self.run_safety_button = QPushButton(self._t("run_safety_button"))
-        self.run_safety_button.clicked.connect(self._on_run_safety_clicked)
-        bar.addWidget(self.run_safety_button)
-        bar.addStretch()
-        return bar
-
     def _create_summary_panel(self) -> QWidget:
         group = QGroupBox(self._t("summary_title"))
         layout = QVBoxLayout(group)
@@ -582,14 +491,6 @@ class MainWindow(QMainWindow):
         self.mac_limited_label.setFont(font)
         self.mac_limited_label.setVisible(False)
         layout.addWidget(self.mac_limited_label)
-        self.safe_progress_label = QLabel(self._t("safe_scan_progress_idle"))
-        self.safe_progress_bar = QProgressBar()
-        self.safe_progress_bar.setRange(0, 100)
-        self.safe_progress_bar.setValue(0)
-        self.safe_progress_label.setVisible(False)
-        self.safe_progress_bar.setVisible(False)
-        layout.addWidget(self.safe_progress_label)
-        layout.addWidget(self.safe_progress_bar)
         return group
 
     def _create_export_bar(self) -> QHBoxLayout:
@@ -630,6 +531,10 @@ class MainWindow(QMainWindow):
         )
         self.summary_label.setText(summary_text)
 
+    def _set_summary_message(self, message: str) -> None:
+        self._summary_status = message
+        self._update_summary()
+
     def _on_start_clicked(self) -> None:
         targets = sanitize_targets(self.target_input.toPlainText())
         if not targets:
@@ -643,7 +548,7 @@ class MainWindow(QMainWindow):
         self._requested_host_estimate = self._estimate_requested_hosts(targets)
         self._summary_status = self._t("scanning")
         self._summary_has_error = False
-        self._reset_result_storage()
+        self._reset_result_storage(emit_selection_changed=False)
         self._update_summary()
         config = ScanConfig(
             targets=targets,
@@ -683,10 +588,6 @@ class MainWindow(QMainWindow):
         if reply != QMessageBox.Yes:
             return
         self._reset_result_storage()
-        self._results.clear()
-        self._result_lookup.clear()
-        self._result_index.clear()
-        self._row_checkboxes.clear()
         self._update_summary()
         self._on_form_state_changed()
         self._refresh_action_buttons()
@@ -699,15 +600,17 @@ class MainWindow(QMainWindow):
                 self._t("advanced_blocked_body"),
             )
             return
-        if not self._advanced_selection:
+        advanced_targets = self._result_grid.advanced_targets()
+        if not advanced_targets:
             QMessageBox.information(
                 self,
                 self._t("advanced_missing_title"),
                 self._t("advanced_missing_body"),
             )
             return
-        os_targets = sorted(target for target in self._advanced_selection if target in self._os_selection)
-        base_targets = sorted(target for target in self._advanced_selection if target not in self._os_selection)
+        os_selection = self._result_grid.os_targets()
+        os_targets = sorted(os_selection)
+        base_targets = sorted(advanced_targets - os_selection)
         configs: List[ScanConfig] = []
         if base_targets:
             configs.append(self._build_advanced_config(base_targets, include_os=False))
@@ -748,14 +651,15 @@ class MainWindow(QMainWindow):
                 self._t("safe_scan_running_body"),
             )
             return
-        if not self._safety_selection:
+        safety_selection = self._result_grid.safety_targets()
+        if not safety_selection:
             QMessageBox.information(
                 self,
                 self._t("safe_scan_missing_title"),
                 self._t("safe_scan_missing_body"),
             )
             return
-        targets = sorted(self._safety_selection)
+        targets = sorted(safety_selection)
         for target in targets:
             self._set_diagnostics_status(target, "running")
         self._safe_scan_manager.start(targets)
@@ -778,7 +682,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(self._t("scan_stopped"))
         self._summary_status = self._t("scan_stopped")
         self._scan_active = False
-        self._stop_advanced_eta_timer()
+        self._job_eta.stop("advanced")
         self._update_summary()
         self._refresh_action_buttons()
         if self._log_dialog:
@@ -800,106 +704,15 @@ class MainWindow(QMainWindow):
         self._update_summary()
         self._on_form_state_changed()
 
-    def _make_item(
-        self, text: str, alignment: Qt.AlignmentFlag | None = None
-    ) -> QTableWidgetItem:
-        item = QTableWidgetItem(text)
-        if alignment is not None:
-            item.setTextAlignment(int(alignment | Qt.AlignVCenter))
-        return item
-
-    def _reset_result_storage(self) -> None:
+    def _reset_result_storage(self, *, emit_selection_changed: bool = True) -> None:
         self._results.clear()
-        self._result_lookup: Dict[str, HostScanResult] = {}
-        self._result_index.clear()
-        self._row_checkboxes.clear()
-        self._advanced_selection.clear()
-        self._os_selection.clear()
-        self._safety_selection.clear()
-        self.table.setRowCount(0)
-        self._sync_select_all_checkboxes()
+        self._result_lookup = {}
+        self._result_grid.reset(emit_signal=emit_selection_changed)
         self._update_mac_limited_label()
-        self._update_select_all_enabled()
 
-    def _insert_row_for_result(
-        self,
-        result: HostScanResult,
-        *,
-        allow_sort_restore: bool = True,
-    ) -> None:
-        sorting_enabled = self.table.isSortingEnabled()
-        if sorting_enabled:
-            self.table.setSortingEnabled(False)
-        row = self.table.rowCount()
-        self.table.insertRow(row)
-        self._populate_row(row, result)
-        self._attach_row_checkboxes(row, result.target)
-        self._result_index[result.target] = row
-        self._update_select_all_enabled()
-        if sorting_enabled:
-            self.table.setSortingEnabled(True)
-            if allow_sort_restore and self._sort_column is not None:
-                self.table.sortItems(self._sort_column, self._sort_order)
-                self._rebuild_row_index_from_table()
-
-    def _populate_row(self, row: int, result: HostScanResult) -> None:
-        self.table.setItem(row, TARGET_COLUMN_INDEX, self._make_item(result.target, Qt.AlignLeft))
-        alive_text = self._t("alive_yes") if result.is_alive else self._t("alive_no")
-        self.table.setItem(row, ALIVE_COLUMN_INDEX, self._make_item(alive_text, Qt.AlignCenter))
-        ports_text = ", ".join(str(p) for p in result.open_ports)
-        self.table.setItem(row, PORTS_COLUMN_INDEX, self._make_item(ports_text, Qt.AlignLeft))
-        os_text = result.os_guess
-        if result.os_accuracy is not None:
-            os_text = f"{os_text} ({result.os_accuracy}%)"
-        self.table.setItem(row, OS_COLUMN_INDEX, self._make_item(os_text, Qt.AlignLeft))
-        self.table.setItem(row, SCORE_COLUMN_INDEX, self._make_item(str(result.score), Qt.AlignRight))
-        display_priority = self._priority_labels.get(result.priority, result.priority)
-        priority_item = self._make_item(display_priority, Qt.AlignCenter)
-        self.table.setItem(row, PRIORITY_COLUMN_INDEX, priority_item)
-        error_text = "\n".join(format_error_list(result.errors, self._language))
-        self.table.setItem(row, ERROR_COLUMN_INDEX, self._make_item(error_text, Qt.AlignLeft))
-        diag_label = self._diagnostics_status_label(result.diagnostics_status)
-        self.table.setItem(row, DIAGNOSTICS_COLUMN_INDEX, self._make_item(diag_label, Qt.AlignCenter))
-        self._apply_row_style(row, result.priority)
-
-    def _attach_row_checkboxes(self, row: int, target: str) -> None:
-        advanced_cb = QCheckBox()
-        advanced_cb.setChecked(target in self._advanced_selection)
-        advanced_cb.stateChanged.connect(
-            lambda state, t=target: self._on_row_checkbox_changed("advanced", t, state)
-        )
-        self.table.setCellWidget(row, ADVANCED_COLUMN_INDEX, self._wrap_checkbox_widget(advanced_cb))
-
-        os_cb = QCheckBox()
-        os_cb.setChecked(target in self._os_selection)
-        os_allowed = self._is_os_selection_allowed()
-        os_cb.setEnabled(os_allowed and target in self._advanced_selection)
-        if not os_allowed:
-            os_cb.setToolTip(self._t("mac_limited_body"))
-        os_cb.stateChanged.connect(
-            lambda state, t=target: self._on_row_checkbox_changed("os", t, state)
-        )
-        self.table.setCellWidget(row, OS_OPTION_COLUMN_INDEX, self._wrap_checkbox_widget(os_cb))
-
-        safety_cb = QCheckBox()
-        safety_cb.setChecked(target in self._safety_selection)
-        safety_cb.stateChanged.connect(
-            lambda state, t=target: self._on_row_checkbox_changed("safety", t, state)
-        )
-        self.table.setCellWidget(row, SAFETY_COLUMN_INDEX, self._wrap_checkbox_widget(safety_cb))
-
-        self._row_checkboxes[target] = {
-            "advanced": advanced_cb,
-            "os": os_cb,
-            "safety": safety_cb,
-        }
-
-    def _wrap_checkbox_widget(self, checkbox: QCheckBox) -> QWidget:
-        widget = QWidget()
-        layout = QHBoxLayout(widget)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(checkbox, alignment=Qt.AlignCenter)
-        return widget
+    def _on_result_grid_selection_changed(self) -> None:
+        self._refresh_action_buttons()
+        self._on_form_state_changed()
 
     def _merge_result(self, existing: HostScanResult, new_result: HostScanResult) -> None:
         existing.is_alive = new_result.is_alive
@@ -914,157 +727,50 @@ class MainWindow(QMainWindow):
         existing.detail_level = new_result.detail_level
         existing.detail_updated_at = new_result.detail_updated_at
 
-    def _update_row_for_target(self, target: str) -> None:
-        row = self._result_index.get(target)
-        result = self._result_lookup.get(target)
-        if row is None or result is None:
-            return
-        self._populate_row(row, result)
-
-    def _diagnostics_status_label(self, status: str) -> str:
-        key_map = {
-            "not_started": "diagnostics_status_not_started",
-            "running": "diagnostics_status_running",
-            "completed": "diagnostics_status_completed",
-            "failed": "diagnostics_status_failed",
-        }
-        return self._t(key_map.get(status, "diagnostics_status_not_started"))
-
     def _set_diagnostics_status(self, target: str, status: str) -> None:
         result = self._result_lookup.get(target)
         if not result:
             return
         result.diagnostics_status = status
         result.diagnostics_updated_at = datetime.now().astimezone().isoformat()
-        self._update_row_for_target(target)
-
-    def _on_row_checkbox_changed(self, kind: str, target: str, state: int) -> None:
-        checked = Qt.CheckState(state) == Qt.CheckState.Checked
-        if kind == "advanced":
-            if checked:
-                self._advanced_selection.add(target)
-                checkbox = self._row_checkboxes.get(target, {}).get("os")
-                if checkbox:
-                    checkbox.setEnabled(self._is_os_selection_allowed())
-            else:
-                self._advanced_selection.discard(target)
-                self._os_selection.discard(target)
-                checkbox = self._row_checkboxes.get(target, {}).get("os")
-                if checkbox:
-                    checkbox.blockSignals(True)
-                    checkbox.setChecked(False)
-                    checkbox.setEnabled(False)
-                    checkbox.blockSignals(False)
-            self._refresh_os_checkbox_states()
-        elif kind == "os":
-            if target not in self._advanced_selection:
-                checkbox = self._row_checkboxes.get(target, {}).get("os")
-                if checkbox:
-                    checkbox.blockSignals(True)
-                    checkbox.setChecked(False)
-                    checkbox.blockSignals(False)
-                return
-            if checked:
-                self._os_selection.add(target)
-            else:
-                self._os_selection.discard(target)
-        elif kind == "safety":
-            if checked:
-                self._safety_selection.add(target)
-            else:
-                self._safety_selection.discard(target)
-        self._sync_select_all_checkboxes()
-        self._refresh_action_buttons()
-        self._on_form_state_changed()
-
-    def _toggle_all_checkboxes(self, kind: str, state: int) -> None:
-        checked = Qt.CheckState(state) == Qt.CheckState.Checked
-        if not self._row_checkboxes:
-            return
-        targets = list(self._row_checkboxes.keys())
-        if kind == "os" and checked:
-            targets = [target for target in targets if target in self._advanced_selection]
-        for target in targets:
-            checkbox = self._row_checkboxes.get(target, {}).get(kind)
-            if checkbox is None:
-                continue
-            checkbox.blockSignals(True)
-            checkbox.setChecked(checked)
-            checkbox.blockSignals(False)
-            self._on_row_checkbox_changed(kind, target, Qt.Checked if checked else Qt.Unchecked)
-        self._sync_select_all_checkboxes()
-
-    def _sync_select_all_checkboxes(self) -> None:
-        total_rows = len(self._row_checkboxes)
-        self._set_select_all_state(self.advanced_select_all_checkbox, len(self._advanced_selection), total_rows)
-        advanced_count = len(self._advanced_selection)
-        self._set_select_all_state(
-            self.os_select_all_checkbox,
-            len(self._os_selection),
-            advanced_count or total_rows,
-        )
-        self._set_select_all_state(self.safety_select_all_checkbox, len(self._safety_selection), total_rows)
-
-    def _set_select_all_state(self, checkbox: QCheckBox, selected: int, total: int) -> None:
-        if checkbox is None:
-            return
-        checkbox.blockSignals(True)
-        checkbox.setCheckState(Qt.Checked if total > 0 and selected == total else Qt.Unchecked)
-        checkbox.blockSignals(False)
-
-    def _rebuild_row_index_from_table(self) -> None:
-        self._result_index.clear()
-        for row in range(self.table.rowCount()):
-            item = self.table.item(row, TARGET_COLUMN_INDEX)
-            if item:
-                self._result_index[item.text()] = row
-
-    def _clear_completed_advanced_selection(self, targets: Sequence[str]) -> None:
-        for target in targets:
-            self._advanced_selection.discard(target)
-            self._os_selection.discard(target)
-            widgets = self._row_checkboxes.get(target, {})
-            adv_cb = widgets.get("advanced")
-            if adv_cb:
-                adv_cb.blockSignals(True)
-                adv_cb.setChecked(False)
-                adv_cb.blockSignals(False)
-            os_cb = widgets.get("os")
-            if os_cb:
-                os_cb.blockSignals(True)
-                os_cb.setChecked(False)
-                os_cb.setEnabled(False)
-                os_cb.blockSignals(False)
-        self._sync_select_all_checkboxes()
-        self._refresh_action_buttons()
-        self._on_form_state_changed()
-
-    def _clear_safety_selection_for_target(self, target: str) -> None:
-        self._safety_selection.discard(target)
-        checkbox = self._row_checkboxes.get(target, {}).get("safety")
-        if checkbox:
-            checkbox.blockSignals(True)
-            checkbox.setChecked(False)
-            checkbox.blockSignals(False)
-        self._sync_select_all_checkboxes()
-        self._refresh_action_buttons()
-        self._on_form_state_changed()
+        self._result_grid.update_result(result, allow_sort_restore=False)
 
     def _refresh_action_buttons(self) -> None:
         advanced_allowed = (
-            not self._scan_active and not self._safe_scan_active and bool(self._advanced_selection)
+            not self._scan_active and not self._safe_scan_active and self._result_grid.has_advanced_selection()
         )
         safety_allowed = (
-            not self._scan_active and not self._safe_scan_active and bool(self._safety_selection)
+            not self._scan_active and not self._safe_scan_active and self._result_grid.has_safety_selection()
         )
-        if self.run_advanced_button:
-            self.run_advanced_button.setEnabled(advanced_allowed)
-        if self.run_safety_button:
-            self.run_safety_button.setEnabled(safety_allowed)
+        self._result_grid.set_run_buttons_enabled(advanced=advanced_allowed, safety=safety_allowed)
         if self.clear_button:
             self.clear_button.setEnabled(not self._scan_active and not self._safe_scan_active)
         if not self._scan_active and not self._safe_scan_active:
             self.start_button.setEnabled(True)
+
+    def _update_mac_limited_label(self) -> None:
+        if not hasattr(self, "mac_limited_label"):
+            return
+        limited = self._is_macos_limited()
+        if limited:
+            self.mac_limited_label.setText(self._t("mac_limited_body"))
+            self.mac_limited_label.setVisible(True)
+        else:
+            self.mac_limited_label.clear()
+            self.mac_limited_label.setVisible(False)
+        self._result_grid.set_os_selection_allowed(
+            not limited,
+            tooltip=self._t("mac_limited_body"),
+        )
+
+    def _is_macos_limited(self) -> bool:
+        return sys.platform == "darwin" and not self._running_as_root()
+
+    def _running_as_root(self) -> bool:
+        geteuid = getattr(os, "geteuid", None)
+        if callable(geteuid):
+            return geteuid() == 0
+        return True
 
     def _consume_placeholder_error(self, result: HostScanResult) -> bool:
         if not result.is_placeholder:
@@ -1082,73 +788,17 @@ class MainWindow(QMainWindow):
         self._update_summary()
         return True
 
-    def _update_mac_limited_label(self) -> None:
-        if not hasattr(self, "mac_limited_label"):
-            return
-        if self._is_macos_limited():
-            self.mac_limited_label.setText(self._t("mac_limited_body"))
-            self.mac_limited_label.setVisible(True)
-        else:
-            self.mac_limited_label.clear()
-            self.mac_limited_label.setVisible(False)
-        self._update_os_select_all_enabled()
-        self._refresh_os_checkbox_states()
-        self._sync_select_all_checkboxes()
-
-    def _is_macos_limited(self) -> bool:
-        return sys.platform == "darwin" and not self._running_as_root()
-
-    def _running_as_root(self) -> bool:
-        geteuid = getattr(os, "geteuid", None)
-        if callable(geteuid):
-            return geteuid() == 0
-        return True
-
-    def _is_os_selection_allowed(self) -> bool:
-        return not self._is_macos_limited()
-
-    def _update_select_all_enabled(self) -> None:
-        has_rows = bool(self._row_checkboxes)
-        if self.advanced_select_all_checkbox:
-            self.advanced_select_all_checkbox.setEnabled(has_rows)
-        if self.safety_select_all_checkbox:
-            self.safety_select_all_checkbox.setEnabled(has_rows)
-        self._update_os_select_all_enabled()
-
-    def _update_os_select_all_enabled(self) -> None:
-        if not self.os_select_all_checkbox:
-            return
-        allowed = self._is_os_selection_allowed()
-        has_rows = bool(self._row_checkboxes)
-        self.os_select_all_checkbox.setEnabled(allowed and has_rows)
-        if not allowed:
-            self.os_select_all_checkbox.setCheckState(Qt.Unchecked)
-
-    def _refresh_os_checkbox_states(self) -> None:
-        allowed = self._is_os_selection_allowed()
-        for target, widgets in self._row_checkboxes.items():
-            os_cb = widgets.get("os")
-            if not os_cb:
-                continue
-            enable = allowed and (target in self._advanced_selection)
-            os_cb.setEnabled(enable)
-            if not enable and os_cb.isChecked():
-                os_cb.blockSignals(True)
-                os_cb.setChecked(False)
-                os_cb.blockSignals(False)
-                self._os_selection.discard(target)
-
     def _handle_fast_result(self, result: HostScanResult) -> None:
         if self._consume_placeholder_error(result):
             return
         existing = self._result_lookup.get(result.target)
         if existing:
             self._merge_result(existing, result)
-            self._update_row_for_target(result.target)
+            self._result_grid.update_result(existing)
         else:
             self._results.append(result)
             self._result_lookup[result.target] = result
-            self._insert_row_for_result(result)
+            self._result_grid.update_result(result)
 
     def _handle_advanced_result(self, result: HostScanResult) -> None:
         if self._consume_placeholder_error(result):
@@ -1156,59 +806,38 @@ class MainWindow(QMainWindow):
         existing = self._result_lookup.get(result.target)
         if existing:
             self._merge_result(existing, result)
-            self._update_row_for_target(result.target)
+            self._result_grid.update_result(existing)
         else:
             self._results.append(result)
             self._result_lookup[result.target] = result
-            self._insert_row_for_result(result)
+            self._result_grid.update_result(result)
 
     def _announce_advanced_eta(self, target_count: int) -> None:
-        if target_count <= 0:
-            self._stop_advanced_eta_timer()
-            return
-        expected = self._estimate_parallel_total_seconds(
+        eta_seconds = self._estimate_parallel_total_seconds(
             target_count,
             float(self._settings.scan.advanced_timeout_seconds),
             timeout_seconds=float(self._settings.scan.advanced_timeout_seconds),
             parallelism=self._settings.scan.advanced_max_parallel,
         )
-        self._summary_status = self._t("advanced_running_status")
-        self._update_summary()
-        self._start_advanced_eta_timer(expected)
+        self._job_eta.start(
+            kind="advanced",
+            expected_seconds=eta_seconds,
+            message_builder=self._build_advanced_eta_message,
+        )
 
-    def _start_advanced_eta_timer(self, expected_seconds: float) -> None:
-        self._advanced_eta_started_at = time.monotonic()
-        self._advanced_eta_expected_seconds = max(expected_seconds, 0.0)
-        if self._advanced_eta_expected_seconds <= 0:
-            self._stop_advanced_eta_timer()
-            return
-        self._update_advanced_eta_status()
-        if not self._advanced_eta_timer.isActive():
-            self._advanced_eta_timer.start()
+    def _build_advanced_eta_message(self, remaining: float) -> str:
+        eta_text = self._format_eta_seconds(remaining)
+        return self._t("advanced_running_status_eta").format(eta=eta_text)
 
-    def _stop_advanced_eta_timer(self) -> None:
-        if self._advanced_eta_timer.isActive():
-            self._advanced_eta_timer.stop()
-        self._advanced_eta_started_at = None
-        self._advanced_eta_expected_seconds = 0.0
-
-    def _on_advanced_eta_tick(self) -> None:
-        if self._advanced_eta_started_at is None:
-            self._stop_advanced_eta_timer()
-            return
-        elapsed = time.monotonic() - self._advanced_eta_started_at
-        remaining = max(self._advanced_eta_expected_seconds - elapsed, 0.0)
-        self._update_advanced_eta_status(remaining)
-        if remaining <= 0:
-            self._stop_advanced_eta_timer()
-
-    def _update_advanced_eta_status(self, remaining: float | None = None) -> None:
-        if remaining is None:
-            message = self._t("advanced_running_status")
-        else:
-            eta_text = self._format_eta_seconds(remaining)
-            message = self._t("advanced_running_status_eta").format(eta=eta_text)
-        self.statusBar().showMessage(message)
+    def _build_safe_eta_message(self, remaining: float) -> str:
+        total = max(self._safe_scan_batch_total, 1)
+        done = min(self._safe_scan_completed, total)
+        eta_text = self._format_eta_seconds(remaining)
+        return self._t("safe_scan_progress_running_multi").format(
+            done=done,
+            total=total,
+            eta=eta_text,
+        )
     def _build_advanced_config(self, targets: Sequence[str], *, include_os: bool) -> ScanConfig:
         modes: Set[ScanMode] = {ScanMode.PORTS}
         if include_os:
@@ -1221,21 +850,6 @@ class MainWindow(QMainWindow):
             max_parallel=self._settings.scan.advanced_max_parallel,
             detail_label="advanced",
         )
-
-    def _apply_row_style(self, row: int, priority: str) -> None:
-        color = self._priority_color(priority)
-        if not color:
-            return
-        for col in range(self.table.columnCount()):
-            item = self.table.item(row, col)
-            if item:
-                item.setBackground(color)
-
-    def _priority_color(self, priority: str) -> QColor | None:
-        color_hex = self._settings.ui.priority_colors.get(priority)
-        if color_hex:
-            return QColor(color_hex)
-        return DEFAULT_PRIORITY_COLORS.get(priority)
 
     def _format_eta_seconds(self, seconds: float) -> str:
         total = max(int(round(seconds)), 0)
@@ -1261,89 +875,6 @@ class MainWindow(QMainWindow):
         return per_job * batches
 
 
-    def _ensure_safe_progress_visible(self) -> None:
-        self.safe_progress_label.setVisible(True)
-        self.safe_progress_bar.setVisible(True)
-
-    def _hide_safe_progress(self) -> None:
-        if self._safe_scan_active:
-            return
-        self.safe_progress_label.setVisible(False)
-        self.safe_progress_bar.setVisible(False)
-
-    def _start_safe_progress(self) -> None:
-        self._safe_scan_elapsed_start = time.monotonic()
-        total = max(self._safe_scan_batch_total, 1)
-        self._safe_scan_batch_expected_duration = self._estimate_parallel_total_seconds(
-            total,
-            self._safe_scan_expected_duration,
-            timeout_seconds=float(self._settings.safe_scan.timeout_seconds),
-            parallelism=self._safe_scan_parallel,
-        )
-        self._safe_scan_completed = 0
-        self.safe_progress_bar.setValue(0)
-        self.safe_progress_bar.setFormat("%p%")
-        remaining, _ = self._safe_scan_progress_snapshot(0.0)
-        self._update_safe_progress_label(0.0, remaining)
-        self._ensure_safe_progress_visible()
-        if not self._safe_progress_timer.isActive():
-            self._safe_progress_timer.start(self._settings.safe_scan.progress_update_ms)
-
-    def _safe_scan_progress_snapshot(self, elapsed_seconds: float) -> tuple[float, float]:
-        remaining_jobs = max(self._safe_scan_batch_total - self._safe_scan_completed, 0)
-        remaining_seconds = self._estimate_parallel_total_seconds(
-            remaining_jobs,
-            self._safe_scan_expected_duration,
-            timeout_seconds=float(self._settings.safe_scan.timeout_seconds),
-            parallelism=self._safe_scan_parallel,
-        )
-        total_seconds = elapsed_seconds + remaining_seconds
-        if remaining_jobs == 0 and self._safe_scan_completed >= self._safe_scan_batch_total:
-            remaining_seconds = 0.0
-            total_seconds = elapsed_seconds
-        self._safe_scan_batch_expected_duration = max(total_seconds, 1.0)
-        return remaining_seconds, self._safe_scan_batch_expected_duration
-
-    def _on_safe_progress_tick(self) -> None:
-        if not self._safe_scan_active or self._safe_scan_elapsed_start is None:
-            return
-        elapsed = time.monotonic() - self._safe_scan_elapsed_start
-        remaining, expected = self._safe_scan_progress_snapshot(elapsed)
-        progress = 0
-        if expected > 0:
-            progress = min(int((elapsed / expected) * 100), 99)
-        if self._safe_scan_batch_total:
-            ratio = self._safe_scan_completed / self._safe_scan_batch_total
-            progress = max(progress, int(ratio * 100))
-        if remaining <= 0 and self._safe_scan_completed >= self._safe_scan_batch_total:
-            progress = 100
-        self.safe_progress_bar.setValue(progress)
-        self._update_safe_progress_label(elapsed, remaining)
-
-    def _update_safe_progress_label(self, elapsed_seconds: float, remaining_seconds: float) -> None:
-        eta = self._format_eta_seconds(remaining_seconds)
-        self.safe_progress_label.setText(
-            self._t("safe_scan_progress_running_multi").format(
-                done=self._safe_scan_completed,
-                total=max(self._safe_scan_batch_total, 1),
-                eta=eta,
-            )
-        )
-
-    def _complete_safe_progress(self, duration: float | None) -> None:
-        self._safe_progress_timer.stop()
-        self.safe_progress_bar.setValue(100)
-        if duration is not None:
-            self.safe_progress_label.setText(
-                self._t("safe_scan_progress_complete_multi").format(
-                    seconds=int(round(duration)),
-                    total=max(self._safe_scan_batch_total, 1),
-                )
-            )
-        else:
-            self.safe_progress_label.setText(self._t("safe_scan_progress_finished"))
-        QTimer.singleShot(self._settings.safe_scan.progress_visibility_ms, self._hide_safe_progress)
-        self._safe_scan_elapsed_start = None
 
     def _record_safe_scan_duration(self, duration: float) -> None:
         if duration <= 0:
@@ -1353,54 +884,38 @@ class MainWindow(QMainWindow):
             self._safe_scan_history.pop(0)
         average = sum(self._safe_scan_history) / len(self._safe_scan_history)
         timeout = float(self._settings.safe_scan.timeout_seconds)
-        self._safe_scan_expected_duration = min(timeout, average)
-        if self._safe_scan_active and self._safe_scan_elapsed_start is not None:
-            elapsed = time.monotonic() - self._safe_scan_elapsed_start
-            remaining, _ = self._safe_scan_progress_snapshot(elapsed)
-            self._update_safe_progress_label(elapsed, remaining)
-
-    def _handle_sort_request(self, column: int) -> None:
-        if self._sort_column == column:
-            self._sort_order = (
-                Qt.DescendingOrder
-                if self._sort_order == Qt.AscendingOrder
-                else Qt.AscendingOrder
-            )
-        else:
-            self._sort_column = column
-            self._sort_order = Qt.AscendingOrder
-
-        header = self.table.horizontalHeader()
-        header.setSortIndicatorShown(True)
-        header.setSortIndicator(column, self._sort_order)
-        if not self.table.isSortingEnabled():
-            self.table.setSortingEnabled(True)
-        self.table.sortItems(column, self._sort_order)
-        self._rebuild_row_index_from_table()
+        baseline = float(self._settings.safe_scan.default_duration_seconds)
+        self._safe_scan_expected_duration = min(timeout, max(baseline, average))
 
     def _on_safe_scan_started(self, total: int) -> None:
         self._safe_scan_active = True
         self._safe_scan_batch_total = total
         self._safe_scan_completed = 0
+        self._safe_scan_elapsed_start = time.monotonic()
         self.start_button.setEnabled(False)
         self.stop_button.setEnabled(False)
-        self.statusBar().showMessage(
-            self._t("safe_scan_status_running_multi").format(total=total)
-        )
         self._refresh_action_buttons()
-        self._start_safe_progress()
+        per_host = max(self._safe_scan_expected_duration, 1.0)
+        expected = self._estimate_parallel_total_seconds(
+            total,
+            per_host,
+            timeout_seconds=float(self._settings.safe_scan.timeout_seconds),
+            parallelism=self._safe_scan_parallel,
+        )
+        self._job_eta.start(
+            kind="safe",
+            expected_seconds=expected,
+            message_builder=self._build_safe_eta_message,
+        )
 
     def _on_safe_scan_progress(self, done: int, total: int) -> None:
         self._safe_scan_completed = done
         self._safe_scan_batch_total = total
-        if self._safe_scan_elapsed_start is not None:
-            elapsed = time.monotonic() - self._safe_scan_elapsed_start
-            remaining, _ = self._safe_scan_progress_snapshot(elapsed)
-            self._update_safe_progress_label(elapsed, remaining)
+        self._job_eta.refresh("safe")
 
     def _on_safe_scan_result(self, report: SafeScanReport) -> None:
         self._set_diagnostics_status(report.target, "completed" if report.success else "failed")
-        self._clear_safety_selection_for_target(report.target)
+        self._result_grid.clear_safety_selection_for_target(report.target)
         dialog = SafeScanDialog(self, report, self._language)
         dialog.exec()
         if dialog.saved_path:
@@ -1418,24 +933,36 @@ class MainWindow(QMainWindow):
             self._t("safe_scan_error_body").format(message=message),
         )
         self.statusBar().showMessage(message)
+        self._summary_status = message
+        self._update_summary()
+        self._job_eta.stop("safe")
 
     def _on_safe_scan_finished(self) -> None:
         duration: float | None = None
         if self._safe_scan_elapsed_start is not None:
             duration = time.monotonic() - self._safe_scan_elapsed_start
+        completed_total = self._safe_scan_batch_total
         self._safe_scan_active = False
         self._safe_scan_targets = []
-        self._safe_scan_batch_total = 0
-        self._safe_scan_completed = 0
         if not self._scan_active:
             self.start_button.setEnabled(True)
         self.stop_button.setEnabled(self._scan_active)
-        if not self._scan_active:
-            finished_message = self._t("safe_scan_status_finished_multi")
-            self.statusBar().showMessage(finished_message)
         self._refresh_action_buttons()
-        self._complete_safe_progress(duration)
+        self._job_eta.stop("safe")
         self._safe_scan_elapsed_start = None
+        if not self._scan_active:
+            if duration is not None and duration > 0:
+                finished_message = self._t("safe_scan_progress_complete_multi").format(
+                    seconds=int(round(duration)),
+                    total=max(completed_total, 1),
+                )
+            else:
+                finished_message = self._t("safe_scan_progress_finished")
+            self.statusBar().showMessage(finished_message)
+            self._summary_status = finished_message
+            self._update_summary()
+        self._safe_scan_batch_total = 0
+        self._safe_scan_completed = 0
 
     def _on_error(self, payload) -> None:
         if isinstance(payload, ErrorRecord):
@@ -1447,14 +974,14 @@ class MainWindow(QMainWindow):
         self._summary_has_error = True
         self._summary_status = message
         self._update_summary()
-        self._stop_advanced_eta_timer()
+        self._job_eta.stop("advanced")
         if self._log_dialog:
             self._log_dialog.mark_scan_finished()
 
     def _on_finished(self) -> None:
         completed_targets = list(self._current_scan_targets)
         if self._active_scan_kind == "advanced" and completed_targets:
-            self._clear_completed_advanced_selection(completed_targets)
+            self._result_grid.clear_completed_advanced_selection(completed_targets)
         if self._active_scan_kind == "advanced" and self._pending_scan_configs:
             next_config = self._pending_scan_configs.pop(0)
             self._current_scan_targets = list(next_config.targets)
@@ -1463,7 +990,7 @@ class MainWindow(QMainWindow):
             self._update_summary()
             self._scan_manager.start(next_config)
             return
-        self._stop_advanced_eta_timer()
+        self._job_eta.stop("advanced")
         self._scan_active = False
         self._pending_scan_configs.clear()
         self._active_scan_kind = None
@@ -1555,23 +1082,22 @@ class MainWindow(QMainWindow):
                 self.restoreGeometry(QByteArray(state.window_geometry))
             except TypeError:
                 pass
-        self._advanced_selection = set(state.advanced_selected)
-        self._os_selection = set(state.os_selected)
-        self._safety_selection = set(state.safety_selected)
+        self._reset_result_storage()
+        self._result_grid.set_selections(
+            advanced=state.advanced_selected,
+            os_targets=state.os_selected,
+            safety=state.safety_selected,
+            emit_signal=False,
+        )
         self._restore_results_from_state(state.results)
 
     def _restore_results_from_state(self, stored: List[HostScanResult]) -> None:
-        if not stored:
-            self._reset_result_storage()
-            self._update_summary()
-            return
-        self._reset_result_storage()
-        for item in stored:
-            result = copy.deepcopy(item)
-            self._results.append(result)
-            self._result_lookup[result.target] = result
-            self._insert_row_for_result(result, allow_sort_restore=False)
-        self._sync_select_all_checkboxes()
+        if stored:
+            for item in stored:
+                result = copy.deepcopy(item)
+                self._results.append(result)
+                self._result_lookup[result.target] = result
+                self._result_grid.update_result(result, allow_sort_restore=False)
         self._update_summary()
 
     def _connect_state_change_signals(self) -> None:
@@ -1590,9 +1116,9 @@ class MainWindow(QMainWindow):
             os_enabled=False,
             window_geometry=bytes(self.saveGeometry()),
             results=copy.deepcopy(self._results),
-            advanced_selected=set(self._advanced_selection),
-            os_selected=set(self._os_selection),
-            safety_selected=set(self._safety_selection),
+            advanced_selected=self._result_grid.advanced_targets(),
+            os_selected=self._result_grid.os_targets(),
+            safety_selected=self._result_grid.safety_targets(),
         )
 
     def _persist_state(self, state: AppState | None = None, *, on_close: bool = False) -> bool:
