@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from enum import Enum, auto
-from typing import Dict, List, Sequence, Set
+from typing import Dict, List, Sequence, Set, Tuple
 
 
 class ScanMode(Enum):
@@ -21,6 +21,10 @@ class ScanConfig:
 
     targets: Sequence[str]
     scan_modes: Set[ScanMode]
+    port_list: Tuple[int, ...] | None = None
+    timeout_seconds: int | None = None
+    max_parallel: int | None = None
+    detail_label: str = "fast"
 
 
 @dataclass
@@ -65,6 +69,10 @@ class HostScanResult:
     score: int = 0
     priority: str = "Unknown"
     errors: List[ErrorRecord] = field(default_factory=list)
+    detail_level: str = "fast"
+    detail_updated_at: str | None = None
+    diagnostics_status: str = "not_started"
+    diagnostics_updated_at: str | None = None
 
     def to_dict(self) -> Dict[str, object]:
         """Return a JSON/export friendly representation."""

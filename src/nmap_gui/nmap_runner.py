@@ -209,14 +209,18 @@ def run_full_scan(
     cancel_event: MpEvent | None = None,
     log_callback: Callable[[ScanLogEvent], None] | None = None,
     settings: AppSettings | None = None,
+    custom_port_list: Sequence[int] | None = None,
+    timeout_override: int | None = None,
+    detail_label: str = "fast",
 ) -> List[HostScanResult]:
     app_settings = settings or get_settings()
     scan_settings = app_settings.scan
     rating_settings = app_settings.rating
-    phase_timeout = scan_settings.default_timeout_seconds
+    phase_timeout = timeout_override or scan_settings.default_timeout_seconds
     errors: List[ErrorRecord] = []
     host_results: Dict[str, HostScanResult] = {}
     has_icmp_alive = False
+    detail_timestamp = datetime.now(timezone.utc).isoformat()
 
     def _emit_log(line: str, stream: str = "info", phase: ScanMode | None = None) -> None:
         if not log_callback:
@@ -249,10 +253,14 @@ def run_full_scan(
             rated: List[HostScanResult] = []
             for item in host_results.values():
                 item.errors = list(errors)
+                item.detail_level = detail_label
+                item.detail_updated_at = detail_timestamp
                 rated.append(apply_rating(item, rating_settings))
             return rated
         if errors or not _is_network_target(target):
             placeholder = HostScanResult(target=target, errors=list(errors))
+            placeholder.detail_level = detail_label
+            placeholder.detail_updated_at = detail_timestamp
             return [apply_rating(placeholder, rating_settings)]
         return []
 
@@ -280,7 +288,8 @@ def run_full_scan(
             has_icmp_alive or ScanMode.ICMP not in scan_modes
         )
         if should_scan_ports:
-            port_list = ",".join(str(p) for p in scan_settings.port_scan_list)
+            selected_ports = custom_port_list or scan_settings.port_scan_list
+            port_list = ",".join(str(p) for p in selected_ports)
             port_args = ["nmap", "-sS", "-p", port_list, target, "-T4"]
             try:
                 xml_text = _run_phase(port_args, ScanMode.PORTS)
@@ -352,8 +361,8 @@ def run_safe_script_scan(
     settings: AppSettings | None = None,
 ) -> SafeScanReport:
     app_settings = settings or get_settings()
-    scan_settings = app_settings.scan
-    effective_timeout = timeout if timeout is not None else scan_settings.default_timeout_seconds
+    safe_settings = app_settings.safe_scan
+    effective_timeout = timeout if timeout is not None else safe_settings.timeout_seconds
     started_at = datetime.now(timezone.utc)
     base_args = ["nmap", "--noninteractive", "-sV", "--script", "safe", target, "-T4"]
     stdout = ""

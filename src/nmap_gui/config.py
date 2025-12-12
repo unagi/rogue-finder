@@ -19,7 +19,17 @@ CONFIG_FILENAME = "rogue-finder.config.yaml"
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "version": 1,
     "scan": {
-        "default_timeout_seconds": 300,
+        "default_timeout_seconds": 180,
+        "fast_port_scan_list": [
+            21,
+            22,
+            80,
+            443,
+            445,
+            3389,
+            5985,
+            50000,
+        ],
         "port_scan_list": [
             21,
             22,
@@ -44,6 +54,8 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
             50000,
         ],
         "high_port_minimum": 50000,
+        "advanced_timeout_seconds": 420,
+        "advanced_max_parallel": 4,
     },
     "rating": {
         "icmp_points": 2,
@@ -103,6 +115,8 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
         "history_limit": 20,
         "progress_update_ms": 500,
         "progress_visibility_ms": 4000,
+        "timeout_seconds": 180,
+        "max_parallel": 2,
     },
 }
 
@@ -116,6 +130,9 @@ class ScanSettings:
     default_timeout_seconds: int
     port_scan_list: Tuple[int, ...]
     high_port_minimum: int
+    fast_port_scan_list: Tuple[int, ...]
+    advanced_timeout_seconds: int
+    advanced_max_parallel: int
 
 
 @dataclass(frozen=True)
@@ -148,6 +165,8 @@ class SafeScanSettings:
     history_limit: int
     progress_update_ms: int
     progress_visibility_ms: int
+    timeout_seconds: int
+    max_parallel: int
 
 
 @dataclass(frozen=True)
@@ -252,10 +271,20 @@ def _build_scan_settings(data: Dict[str, Any]) -> ScanSettings:
     ports = tuple(int(port) for port in data.get("port_scan_list", ()))
     if not ports:
         ports = tuple(DEFAULT_SETTINGS["scan"]["port_scan_list"])
+    fast_ports = tuple(int(port) for port in data.get("fast_port_scan_list", ()))
+    if not fast_ports:
+        fast_ports = tuple(DEFAULT_SETTINGS["scan"]["fast_port_scan_list"])
+    advanced_timeout = int(data.get("advanced_timeout_seconds", DEFAULT_SETTINGS["scan"]["advanced_timeout_seconds"]))
+    advanced_max = int(data.get("advanced_max_parallel", DEFAULT_SETTINGS["scan"]["advanced_max_parallel"]))
+    if advanced_max <= 0:
+        advanced_max = 1
     return ScanSettings(
         default_timeout_seconds=timeout,
         port_scan_list=ports,
         high_port_minimum=high_port_min,
+        fast_port_scan_list=fast_ports,
+        advanced_timeout_seconds=advanced_timeout,
+        advanced_max_parallel=advanced_max,
     )
 
 
@@ -310,11 +339,19 @@ def _build_ui_settings(data: Dict[str, Any]) -> UiSettings:
 
 def _build_safe_scan_settings(data: Dict[str, Any]) -> SafeScanSettings:
     defaults = DEFAULT_SETTINGS["safe_scan"]
+    timeout_seconds = int(data.get("timeout_seconds", defaults["timeout_seconds"]))
+    if timeout_seconds <= 0:
+        timeout_seconds = defaults["timeout_seconds"]
+    max_parallel = int(data.get("max_parallel", defaults["max_parallel"]))
+    if max_parallel <= 0:
+        max_parallel = 1
     return SafeScanSettings(
         default_duration_seconds=float(data.get("default_duration_seconds", defaults["default_duration_seconds"])),
         history_limit=int(data.get("history_limit", defaults["history_limit"])),
         progress_update_ms=int(data.get("progress_update_ms", defaults["progress_update_ms"])),
         progress_visibility_ms=int(data.get("progress_visibility_ms", defaults["progress_visibility_ms"])),
+        timeout_seconds=timeout_seconds,
+        max_parallel=max_parallel,
     )
 
 

@@ -20,6 +20,10 @@ EXPORT_FIELDS = [
     "priority",
     "score_breakdown",
     "errors",
+    "detail_level",
+    "detail_updated_at",
+    "diagnostics_status",
+    "diagnostics_updated_at",
 ]
 
 
@@ -48,6 +52,10 @@ def export_csv(
                 "priority": item.priority,
                 "score_breakdown": json.dumps(item.score_breakdown, ensure_ascii=False),
                 "errors": formatted_errors,
+                "detail_level": item.detail_level,
+                "detail_updated_at": item.detail_updated_at or "",
+                "diagnostics_status": item.diagnostics_status,
+                "diagnostics_updated_at": item.diagnostics_updated_at or "",
             }
             writer.writerow(row)
     return output
