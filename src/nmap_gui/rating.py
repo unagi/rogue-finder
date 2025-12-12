@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Dict
+from typing import Dict, Iterable
 
 from .config import RatingSettings, get_settings
 from .models import HostScanResult
@@ -31,50 +31,76 @@ def apply_rating(
 
     breakdown: Dict[str, int] = {}
     score = 0
+    score += _score_icmp(result, rating_settings, breakdown)
+    score += _score_ports(result.open_ports, rating_settings, breakdown)
+    score += _score_os(result.os_guess, rating_settings, breakdown)
+    score += _score_combos(result.open_ports, rating_settings, breakdown)
+    priority = _determine_priority(score, rating_settings)
 
-    if result.is_alive:
-        breakdown["icmp"] = rating_settings.icmp_points
-        score += rating_settings.icmp_points
+    return replace(result, score=score, priority=priority, score_breakdown=breakdown)
 
-    high_port_bonus_port = rating_settings.high_port_bonus_port
-    high_port_bonus_points = rating_settings.high_port_bonus_points
 
-    for port in result.open_ports:
-        points = rating_settings.port_weights.get(port, 0)
+def _score_icmp(result: HostScanResult, settings: RatingSettings, breakdown: Dict[str, int]) -> int:
+    if not result.is_alive:
+        return 0
+    breakdown["icmp"] = settings.icmp_points
+    return settings.icmp_points
+
+
+def _score_ports(
+    open_ports: Iterable[int],
+    settings: RatingSettings,
+    breakdown: Dict[str, int],
+) -> int:
+    score = 0
+    high_port_bonus_port = settings.high_port_bonus_port
+    high_port_bonus_points = settings.high_port_bonus_points
+    for port in open_ports:
+        points = settings.port_weights.get(port, 0)
         if points:
-            breakdown[f"port {port}"] = breakdown.get(f"port {port}", 0) + points
+            key = f"port {port}"
+            breakdown[key] = breakdown.get(key, 0) + points
             score += points
         if high_port_bonus_points and port == high_port_bonus_port:
             key = f"high port {high_port_bonus_port}"
             breakdown[key] = breakdown.get(key, 0) + high_port_bonus_points
             score += high_port_bonus_points
+    return score
 
-    os_class = classify_os_guess(result.os_guess)
-    os_points = rating_settings.os_weights.get(os_class, 1)
+
+def _score_os(os_guess: str, settings: RatingSettings, breakdown: Dict[str, int]) -> int:
+    os_class = classify_os_guess(os_guess)
+    os_points = settings.os_weights.get(os_class, 1)
     breakdown[f"os:{os_class}"] = os_points
-    score += os_points
+    return os_points
 
-    open_port_set = set(result.open_ports)
-    for rule in rating_settings.combo_rules:
+
+def _score_combos(
+    open_ports: Iterable[int],
+    settings: RatingSettings,
+    breakdown: Dict[str, int],
+) -> int:
+    open_port_set = set(open_ports)
+    score = 0
+    for rule in settings.combo_rules:
         required = set(rule.required)
-        one_of = rule.one_of
-        points = rule.points
         if required and not required.issubset(open_port_set):
             continue
-        matched_one_of = [port for port in one_of if port in open_port_set] if one_of else []
-        if one_of and not matched_one_of:
+        matched_one_of = [port for port in rule.one_of if port in open_port_set] if rule.one_of else []
+        if rule.one_of and not matched_one_of:
             continue
-        if not one_of and not required:
+        if not rule.one_of and not required:
             continue
         key_parts = sorted(required.union(matched_one_of))
-        key = "+".join(str(p) for p in key_parts)
-        breakdown[f"combo {key}"] = points
-        score += points
+        key = "+".join(str(port) for port in key_parts)
+        breakdown[f"combo {key}"] = rule.points
+        score += rule.points
+    return score
 
-    priority = "Low"
-    if score >= rating_settings.priority_high_threshold:
-        priority = "High"
-    elif score >= rating_settings.priority_medium_threshold:
-        priority = "Medium"
 
-    return replace(result, score=score, priority=priority, score_breakdown=breakdown)
+def _determine_priority(score: int, settings: RatingSettings) -> str:
+    if score >= settings.priority_high_threshold:
+        return "High"
+    if score >= settings.priority_medium_threshold:
+        return "Medium"
+    return "Low"

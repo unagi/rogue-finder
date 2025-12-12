@@ -225,173 +225,215 @@ def run_full_scan(
     timeout_override: int | None = None,
     detail_label: str = "fast",
 ) -> List[HostScanResult]:
-    app_settings = settings or get_settings()
-    scan_settings = app_settings.scan
-    rating_settings = app_settings.rating
-    phase_timeout = timeout_override or scan_settings.default_timeout_seconds
-    errors: List[ErrorRecord] = []
-    host_results: Dict[str, HostScanResult] = {}
-    has_icmp_alive = False
-    detail_timestamp = datetime.now(timezone.utc).isoformat()
-    mac_without_root = _is_macos() and not _has_root_privileges()
+    runner = _FullScanRunner(
+        target=target,
+        scan_modes=scan_modes,
+        cancel_event=cancel_event,
+        log_callback=log_callback,
+        settings=settings,
+        custom_port_list=custom_port_list,
+        timeout_override=timeout_override,
+        detail_label=detail_label,
+    )
+    return runner.run()
 
-    def _emit_log(line: str, stream: str = "info", phase: ScanMode | None = None) -> None:
-        if not log_callback:
+
+class _FullScanRunner:
+    def __init__(
+        self,
+        *,
+        target: str,
+        scan_modes: Set[ScanMode],
+        cancel_event: MpEvent | None,
+        log_callback: Callable[[ScanLogEvent], None] | None,
+        settings: AppSettings | None,
+        custom_port_list: Sequence[int] | None,
+        timeout_override: int | None,
+        detail_label: str,
+    ) -> None:
+        self.target = target
+        self.scan_modes = scan_modes
+        self.cancel_event = cancel_event
+        self.log_callback = log_callback
+        self.app_settings = settings or get_settings()
+        self.scan_settings = self.app_settings.scan
+        self.rating_settings = self.app_settings.rating
+        self.custom_port_list = custom_port_list
+        self.phase_timeout = timeout_override or self.scan_settings.default_timeout_seconds
+        self.detail_label = detail_label
+        self.detail_timestamp = datetime.now(timezone.utc).isoformat()
+        self.errors: List[ErrorRecord] = []
+        self.host_results: Dict[str, HostScanResult] = {}
+        self.mac_without_root = _is_macos() and not _has_root_privileges()
+
+    def run(self) -> List[HostScanResult]:
+        try:
+            if self._was_cancelled():
+                return self._handle_cancel()
+            has_icmp_alive = self._run_icmp_phase()
+            if self._was_cancelled():
+                return self._handle_cancel()
+            self._run_port_phase(has_icmp_alive)
+            if self._was_cancelled():
+                return self._handle_cancel()
+            self._run_os_phase(has_icmp_alive)
+            if self._was_cancelled():
+                return self._handle_cancel()
+        except NmapNotInstalledError:
+            self.errors.append(build_error(ERROR_NMAP_NOT_FOUND))
+        except subprocess.TimeoutExpired as exc:
+            timeout_value = exc.timeout if getattr(exc, "timeout", None) else self.phase_timeout
+            self.errors.append(build_error(ERROR_NMAP_TIMEOUT, timeout=timeout_value))
+        except NmapExecutionError as exc:
+            self.errors.append(build_error(ERROR_NMAP_FAILED, detail=str(exc)))
+        return self._finalize()
+
+    def _run_icmp_phase(self) -> bool:
+        if ScanMode.ICMP not in self.scan_modes:
+            return False
+        icmp_args = self._icmp_args()
+        xml_text = self._run_phase(icmp_args, ScanMode.ICMP)
+        try:
+            alive_hosts = parse_icmp_hosts(xml_text, self.target)
+        except ET.ParseError as exc:
+            raise NmapExecutionError(f"Failed to parse ICMP XML: {exc}") from exc
+        for host_key in alive_hosts:
+            self._ensure_host(host_key).is_alive = True
+        return bool(alive_hosts)
+
+    def _icmp_args(self) -> List[str]:
+        if self.mac_without_root:
+            self._emit_log(
+                "macOS without root privileges detected – using TCP ping scan (-PA80,443).",
+                phase=ScanMode.ICMP,
+            )
+            return ["nmap", "-sn", "-PA80,443", self.target, "-T4"]
+        return ["nmap", "-sn", "-PE", self.target]
+
+    def _run_port_phase(self, has_icmp_alive: bool) -> None:
+        if not self._should_scan_ports(has_icmp_alive):
             return
-        log_callback(
+        selected_ports = self.custom_port_list or self.scan_settings.port_scan_list
+        port_list = ",".join(str(p) for p in selected_ports)
+        port_args = self._port_scan_args(port_list)
+        xml_text = self._execute_port_scan(port_args, port_list)
+        try:
+            port_map = parse_open_ports_by_host(xml_text, self.target)
+        except ET.ParseError as exc:
+            raise NmapExecutionError(f"Failed to parse port scan XML: {exc}") from exc
+        for host_key, ports in port_map.items():
+            host_result = self._ensure_host(host_key)
+            host_result.is_alive = True
+            host_result.open_ports = ports
+            host_result.high_ports = [p for p in ports if p >= self.scan_settings.high_port_minimum]
+
+    def _should_scan_ports(self, has_icmp_alive: bool) -> bool:
+        return ScanMode.PORTS in self.scan_modes and (
+            has_icmp_alive or ScanMode.ICMP not in self.scan_modes
+        )
+
+    def _port_scan_args(self, port_list: str) -> List[str]:
+        args = ["nmap", "-sS", "-p", port_list, self.target, "-T4"]
+        if self.mac_without_root:
+            args[1] = "-sT"
+            self._emit_log(
+                "macOS without root privileges detected – using TCP connect scan (-sT).",
+                phase=ScanMode.PORTS,
+            )
+        return args
+
+    def _execute_port_scan(self, port_args: List[str], port_list: str) -> str:
+        try:
+            return self._run_phase(port_args, ScanMode.PORTS)
+        except NmapExecutionError as exc:
+            if not _requires_privileged_scan(str(exc)):
+                raise
+            LOGGER.info(
+                "SYN scan requires elevated privileges; retrying with TCP connect scan (-sT)."
+            )
+            self._emit_log(
+                "SYN scan requires elevated privileges; falling back to TCP connect scan (-sT).",
+                phase=ScanMode.PORTS,
+            )
+            fallback_args = ["nmap", "-sT", "-p", port_list, self.target, "-T4"]
+            return self._run_phase(fallback_args, ScanMode.PORTS)
+
+    def _run_os_phase(self, has_icmp_alive: bool) -> None:
+        should_scan_os = ScanMode.OS in self.scan_modes and (
+            has_icmp_alive or ScanMode.ICMP not in self.scan_modes
+        )
+        if not should_scan_os:
+            return
+        if self.mac_without_root:
+            self._emit_log(
+                "Skipping OS detection because macOS GUI builds run without root privileges.",
+                phase=ScanMode.OS,
+            )
+            return
+        xml_text = self._run_phase(["nmap", "-O", "-Pn", self.target], ScanMode.OS)
+        try:
+            os_map = parse_os_guesses_by_host(xml_text, self.target)
+        except ET.ParseError as exc:
+            raise NmapExecutionError(f"Failed to parse OS detection XML: {exc}") from exc
+        for host_key, (guess, accuracy) in os_map.items():
+            host_result = self._ensure_host(host_key)
+            host_result.is_alive = True
+            host_result.os_guess = guess
+            host_result.os_accuracy = accuracy
+
+    def _run_phase(self, args: Sequence[str], phase: ScanMode | None) -> str:
+        return run_nmap(
+            args,
+            timeout=self.phase_timeout,
+            log_callback=self.log_callback,
+            log_target=self.target,
+            log_phase=phase,
+        )
+
+    def _ensure_host(self, host_key: str) -> HostScanResult:
+        if host_key not in self.host_results:
+            self.host_results[host_key] = HostScanResult(target=host_key)
+        return self.host_results[host_key]
+
+    def _finalize(self) -> List[HostScanResult]:
+        if self.host_results:
+            rated: List[HostScanResult] = []
+            for item in self.host_results.values():
+                item.errors = list(self.errors)
+                item.detail_level = self.detail_label
+                item.detail_updated_at = self.detail_timestamp
+                rated.append(apply_rating(item, self.rating_settings))
+            return rated
+        if self.errors or not _is_network_target(self.target):
+            placeholder = HostScanResult(
+                target=self.target,
+                errors=list(self.errors),
+                is_placeholder=True,
+                detail_level=self.detail_label,
+                detail_updated_at=self.detail_timestamp,
+            )
+            return [apply_rating(placeholder, self.rating_settings)]
+        return []
+
+    def _handle_cancel(self) -> List[HostScanResult]:
+        if not any(err.code == ERROR_SCAN_ABORTED.code for err in self.errors):
+            self.errors.append(build_error(ERROR_SCAN_ABORTED))
+        return self._finalize()
+
+    def _emit_log(self, line: str, stream: str = "info", phase: ScanMode | None = None) -> None:
+        if not self.log_callback:
+            return
+        self.log_callback(
             ScanLogEvent(
-                target=target,
+                target=self.target,
                 phase=phase,
                 stream=stream,
                 line=line,
             )
         )
 
-    def _run_phase(args: Sequence[str], phase: ScanMode | None) -> str:
-        return run_nmap(
-            args,
-            timeout=phase_timeout,
-            log_callback=log_callback,
-            log_target=target,
-            log_phase=phase,
-        )
-
-    def _ensure_host(host_key: str) -> HostScanResult:
-        if host_key not in host_results:
-            host_results[host_key] = HostScanResult(target=host_key)
-        return host_results[host_key]
-
-    def _finalize() -> List[HostScanResult]:
-        if host_results:
-            rated: List[HostScanResult] = []
-            for item in host_results.values():
-                item.errors = list(errors)
-                item.detail_level = detail_label
-                item.detail_updated_at = detail_timestamp
-                rated.append(apply_rating(item, rating_settings))
-            return rated
-        if errors or not _is_network_target(target):
-            placeholder = HostScanResult(
-                target=target,
-                errors=list(errors),
-                is_placeholder=True,
-                detail_level=detail_label,
-                detail_updated_at=detail_timestamp,
-            )
-            return [apply_rating(placeholder, rating_settings)]
-        return []
-
-    def _handle_cancel() -> List[HostScanResult]:
-        if not any(err.code == ERROR_SCAN_ABORTED.code for err in errors):
-            errors.append(build_error(ERROR_SCAN_ABORTED))
-        return _finalize()
-
-    try:
-        if cancel_event and cancel_event.is_set():
-            return _handle_cancel()
-        if ScanMode.ICMP in scan_modes:
-            icmp_args: List[str]
-            if mac_without_root:
-                icmp_args = ["nmap", "-sn", "-PA80,443", target, "-T4"]
-                _emit_log(
-                    "macOS without root privileges detected – using TCP ping scan (-PA80,443).",
-                    stream="info",
-                    phase=ScanMode.ICMP,
-                )
-            else:
-                icmp_args = ["nmap", "-sn", "-PE", target]
-            xml_text = _run_phase(icmp_args, ScanMode.ICMP)
-            try:
-                alive_hosts = parse_icmp_hosts(xml_text, target)
-            except ET.ParseError as exc:
-                raise NmapExecutionError(f"Failed to parse ICMP XML: {exc}") from exc
-            for host_key in alive_hosts:
-                _ensure_host(host_key).is_alive = True
-            has_icmp_alive = bool(alive_hosts)
-        if cancel_event and cancel_event.is_set():
-            return _handle_cancel()
-
-        should_scan_ports = ScanMode.PORTS in scan_modes and (
-            has_icmp_alive or ScanMode.ICMP not in scan_modes
-        )
-        if should_scan_ports:
-            selected_ports = custom_port_list or scan_settings.port_scan_list
-            port_list = ",".join(str(p) for p in selected_ports)
-            port_args = ["nmap", "-sS", "-p", port_list, target, "-T4"]
-            if mac_without_root:
-                port_args[1] = "-sT"
-                _emit_log(
-                    "macOS without root privileges detected – using TCP connect scan (-sT).",
-                    stream="info",
-                    phase=ScanMode.PORTS,
-                )
-            try:
-                xml_text = _run_phase(port_args, ScanMode.PORTS)
-            except NmapExecutionError as exc:
-                if _requires_privileged_scan(str(exc)):
-                    LOGGER.info(
-                        "SYN scan requires elevated privileges; retrying with TCP connect scan (-sT)."
-                    )
-                    _emit_log(
-                        "SYN scan requires elevated privileges; falling back to TCP connect scan (-sT).",
-                        stream="info",
-                        phase=ScanMode.PORTS,
-                    )
-                    xml_text = _run_phase([
-                        "nmap",
-                        "-sT",
-                        "-p",
-                        port_list,
-                        target,
-                        "-T4",
-                    ], ScanMode.PORTS)
-                else:
-                    raise
-            try:
-                port_map = parse_open_ports_by_host(xml_text, target)
-            except ET.ParseError as exc:
-                raise NmapExecutionError(f"Failed to parse port scan XML: {exc}") from exc
-            for host_key, ports in port_map.items():
-                host_result = _ensure_host(host_key)
-                host_result.is_alive = True
-                host_result.open_ports = ports
-                host_result.high_ports = [p for p in ports if p >= scan_settings.high_port_minimum]
-        if cancel_event and cancel_event.is_set():
-            return _handle_cancel()
-
-        should_scan_os = ScanMode.OS in scan_modes and (
-            has_icmp_alive or ScanMode.ICMP not in scan_modes
-        )
-        if should_scan_os and mac_without_root:
-            _emit_log(
-                "Skipping OS detection because macOS GUI builds run without root privileges.",
-                stream="info",
-                phase=ScanMode.OS,
-            )
-            should_scan_os = False
-        if should_scan_os:
-            xml_text = _run_phase(["nmap", "-O", "-Pn", target], ScanMode.OS)
-            try:
-                os_map = parse_os_guesses_by_host(xml_text, target)
-            except ET.ParseError as exc:
-                raise NmapExecutionError(f"Failed to parse OS detection XML: {exc}") from exc
-            for host_key, (guess, accuracy) in os_map.items():
-                host_result = _ensure_host(host_key)
-                host_result.is_alive = True
-                host_result.os_guess = guess
-                host_result.os_accuracy = accuracy
-        if cancel_event and cancel_event.is_set():
-            return _handle_cancel()
-
-    except NmapNotInstalledError:
-        errors.append(build_error(ERROR_NMAP_NOT_FOUND))
-    except subprocess.TimeoutExpired as exc:
-        timeout_value = exc.timeout if getattr(exc, "timeout", None) else phase_timeout
-        errors.append(build_error(ERROR_NMAP_TIMEOUT, timeout=timeout_value))
-    except NmapExecutionError as exc:
-        errors.append(build_error(ERROR_NMAP_FAILED, detail=str(exc)))
-
-    return _finalize()
+    def _was_cancelled(self) -> bool:
+        return bool(self.cancel_event and self.cancel_event.is_set())
 
 
 def _format_cli_command(args: Sequence[str]) -> str:

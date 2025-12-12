@@ -338,46 +338,52 @@ class ResultGrid(QObject):
 
     def _on_row_checkbox_changed(self, kind: str, target: str, state: int) -> None:
         checked = Qt.CheckState(state) == Qt.CheckState.Checked
-        if kind == "advanced":
-            if checked:
-                self._advanced_selection.add(target)
-                checkbox = self._row_checkboxes.get(target, {}).get("os")
-                if checkbox:
-                    checkbox.setEnabled(self._os_selection_allowed)
-            else:
-                removed = target in self._advanced_selection
-                self._advanced_selection.discard(target)
-                if target in self._os_selection:
-                    self._os_selection.discard(target)
-                checkbox = self._row_checkboxes.get(target, {}).get("os")
-                if checkbox:
-                    checkbox.blockSignals(True)
-                    checkbox.setChecked(False)
-                    checkbox.setEnabled(False)
-                    checkbox.blockSignals(False)
-                if removed:
-                    self.selectionChanged.emit()
-                    self._sync_select_all_checkboxes()
-                    return
-        elif kind == "os":
-            if target not in self._advanced_selection:
-                checkbox = self._row_checkboxes.get(target, {}).get("os")
-                if checkbox:
-                    checkbox.blockSignals(True)
-                    checkbox.setChecked(False)
-                    checkbox.blockSignals(False)
-                return
-            if checked:
-                self._os_selection.add(target)
-            else:
-                self._os_selection.discard(target)
-        elif kind == "safety":
-            if checked:
-                self._safety_selection.add(target)
-            else:
-                self._safety_selection.discard(target)
-        self._sync_select_all_checkboxes()
-        self.selectionChanged.emit()
+        handlers = {
+            "advanced": self._handle_advanced_checkbox,
+            "os": self._handle_os_checkbox,
+            "safety": self._handle_safety_checkbox,
+        }
+        handler = handlers.get(kind)
+        if handler and handler(target, checked):
+            self._sync_select_all_checkboxes()
+            self.selectionChanged.emit()
+
+    def _handle_advanced_checkbox(self, target: str, checked: bool) -> bool:
+        os_checkbox = self._row_checkboxes.get(target, {}).get("os")
+        if checked:
+            self._advanced_selection.add(target)
+            if os_checkbox:
+                os_checkbox.setEnabled(self._os_selection_allowed)
+            return True
+        self._advanced_selection.discard(target)
+        self._os_selection.discard(target)
+        if os_checkbox:
+            os_checkbox.blockSignals(True)
+            os_checkbox.setChecked(False)
+            os_checkbox.setEnabled(False)
+            os_checkbox.blockSignals(False)
+        return True
+
+    def _handle_os_checkbox(self, target: str, checked: bool) -> bool:
+        if target not in self._advanced_selection:
+            checkbox = self._row_checkboxes.get(target, {}).get("os")
+            if checkbox:
+                checkbox.blockSignals(True)
+                checkbox.setChecked(False)
+                checkbox.blockSignals(False)
+            return False
+        if checked:
+            self._os_selection.add(target)
+        else:
+            self._os_selection.discard(target)
+        return True
+
+    def _handle_safety_checkbox(self, target: str, checked: bool) -> bool:
+        if checked:
+            self._safety_selection.add(target)
+        else:
+            self._safety_selection.discard(target)
+        return True
 
     def _sync_select_all_checkboxes(self) -> None:
         total_rows = len(self._row_checkboxes)
