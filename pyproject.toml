@@ -21,8 +21,8 @@ cmd = """
   --onefile \
   --windowed \
   --icon assets/icons/rogue-finder.icns \
-  --add-data=assets/icons/rogue-finder.icns:assets/icons \
-  --add-data=assets/icons/icon_master.png:assets/icons
+  "--add-data=assets/icons/rogue-finder.icns:assets/icons" \
+  "--add-data=assets/icons/icon_master.png:assets/icons"
 """
 env.PYINSTALLER_CONFIG_DIR = "{project_root}/.pyinstaller"
 env.PYINSTALLER_CACHE_DIR = "{project_root}/.pyinstaller"
