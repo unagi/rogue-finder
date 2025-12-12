@@ -1,10 +1,9 @@
-"""Diagnostics report viewer dialog."""
+"""Embedded diagnostics report viewer."""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFileDialog,
-    QDialog,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QMessageBox,
@@ -17,14 +16,11 @@ from ..models import SafeScanReport
 from .safe_scan_report_formatter import build_default_filename, build_report_text, build_status_text
 
 
-class SafeScanReportViewer(QDialog):
-    """Modal dialog that displays stored SafeScanReport data."""
+class SafeScanReportViewer(QGroupBox):
+    """Inline widget that displays stored SafeScanReport data."""
 
     def __init__(self, translator, language: str, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle(translator("diagnostics_viewer_title"))
-        self.setWindowModality(Qt.ApplicationModal)
-        self.setModal(True)
+        super().__init__(translator("diagnostics_viewer_title"), parent)
         self._t = translator
         self._language = language
         self._current_report: SafeScanReport | None = None
@@ -65,9 +61,6 @@ class SafeScanReportViewer(QDialog):
         self._text_edit.setVisible(True)
         self._empty_label.setVisible(False)
         self._save_button.setEnabled(True)
-        self.open()
-        self.raise_()
-        self.activateWindow()
 
     def clear_report(self) -> None:
         self._current_report = None
@@ -82,10 +75,6 @@ class SafeScanReportViewer(QDialog):
         if self._current_report:
             return self._current_report.target
         return None
-
-    def closeEvent(self, event) -> None:  # type: ignore[override]
-        self.clear_report()
-        super().closeEvent(event)
 
     def _save_current_report(self) -> None:
         if not self._current_report:

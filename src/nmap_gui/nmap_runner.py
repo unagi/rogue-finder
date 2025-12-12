@@ -404,7 +404,7 @@ class _FullScanRunner:
                 item.detail_updated_at = self.detail_timestamp
                 rated.append(apply_rating(item, self.rating_settings))
             return rated
-        if self.errors:
+        if self.errors or not _is_network_target(self.target):
             placeholder = HostScanResult(
                 target=self.target,
                 errors=list(self.errors),
@@ -413,14 +413,6 @@ class _FullScanRunner:
                 detail_updated_at=self.detail_timestamp,
             )
             return [apply_rating(placeholder, self.rating_settings)]
-        if not _is_network_target(self.target):
-            empty_result = HostScanResult(
-                target=self.target,
-                is_alive=False,
-                detail_level=self.detail_label,
-                detail_updated_at=self.detail_timestamp,
-            )
-            return [apply_rating(empty_result, self.rating_settings)]
         return []
 
     def _handle_cancel(self) -> List[HostScanResult]:

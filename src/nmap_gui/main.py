@@ -51,14 +51,6 @@ def main(argv: list[str] | None = None) -> int:
     mp.freeze_support()
     app = QApplication(sys.argv)
     try:
-        from .gui.app_icon import load_app_icon
-    except ImportError:  # pragma: no cover - mirrors main window fallback
-        from nmap_gui.gui.app_icon import load_app_icon
-
-    app_icon = load_app_icon()
-    if not app_icon.isNull():
-        app.setWindowIcon(app_icon)
-    try:
         settings = get_settings()
     except ConfigurationError as exc:
         logging.exception("Failed to load configuration")
@@ -69,7 +61,7 @@ def main(argv: list[str] | None = None) -> int:
             "Delete or fix rogue-finder.config.yaml and retry.",
         )
         return 1
-    window = MainWindow(settings, app_icon=app_icon)
+    window = MainWindow(settings)
     window.show()
     return app.exec()
 
