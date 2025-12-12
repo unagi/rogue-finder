@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QHeaderView,
+    QProgressBar,
 )
 
 from .i18n import format_error_list
@@ -43,6 +44,7 @@ class ResultGrid(QObject):
     selectionChanged = Signal()
     runAdvancedRequested = Signal(bool)
     runSafetyRequested = Signal()
+    diagnosticsViewRequested = Signal(str)
 
     def __init__(
         self,
@@ -66,11 +68,13 @@ class ResultGrid(QObject):
         self._safety_selection: Set[str] = set()
         self._result_index: Dict[str, int] = {}
         self._row_checkboxes: Dict[str, Dict[str, QCheckBox]] = {}
+        self._diagnostics_status: Dict[str, str] = {}
         self._advanced_buttons_enabled = False
         self._os_button_allowed = True
         self._os_button_tooltip = ""
         self._sort_column: int | None = None
         self._sort_order = Qt.AscendingOrder
+        self._progress_bar: QProgressBar | None = None
         self._build_widget()
 
     def widget(self) -> QWidget:
@@ -104,11 +108,13 @@ class ResultGrid(QObject):
     def reset(self, *, emit_signal: bool = True) -> None:
         self._result_index.clear()
         self._row_checkboxes.clear()
+        self._diagnostics_status.clear()
         self._advanced_selection.clear()
         self._safety_selection.clear()
         self._table.setRowCount(0)
         self._sync_select_all_checkboxes()
         self._update_select_all_enabled()
+        self.finish_progress()
         if emit_signal:
             self.selectionChanged.emit()
 
@@ -176,12 +182,32 @@ class ResultGrid(QObject):
     def has_rows(self) -> bool:
         return bool(self._result_index)
 
+    def reset_progress(self, total: int) -> None:
+        if self._progress_bar is None:
+            return
+        self._progress_bar.setMaximum(max(total, 1))
+        self._progress_bar.setValue(0)
+        self._progress_bar.setVisible(True)
+
+    def set_progress(self, done: int, total: int) -> None:
+        if self._progress_bar is None:
+            return
+        self._progress_bar.setMaximum(max(total, 1))
+        self._progress_bar.setValue(max(0, min(done, total)))
+        self._progress_bar.setVisible(True)
+
+    def finish_progress(self) -> None:
+        if self._progress_bar is None:
+            return
+        self._progress_bar.setVisible(False)
+
     def _build_widget(self) -> None:
         layout = QVBoxLayout(self._widget)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
         layout.addLayout(self._create_action_bar())
         layout.addWidget(self._create_table())
+        layout.addWidget(self._create_progress_bar())
 
     def _create_action_bar(self) -> QHBoxLayout:
         bar = QHBoxLayout()
@@ -239,7 +265,14 @@ class ResultGrid(QObject):
         self._table.setWordWrap(False)
         self._table.setSelectionBehavior(QTableWidget.SelectRows)
         self._table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self._table.cellClicked.connect(self._handle_cell_clicked)
         return self._table
+
+    def _create_progress_bar(self) -> QWidget:
+        self._progress_bar = QProgressBar()
+        self._progress_bar.setVisible(False)
+        self._progress_bar.setTextVisible(False)
+        return self._progress_bar
 
     def _configure_column_sizes(self, header: QHeaderView) -> None:
         stretch_columns = [
@@ -261,6 +294,17 @@ class ResultGrid(QObject):
         ]
         for index in compact_columns:
             header.setSectionResizeMode(index, QHeaderView.ResizeToContents)
+
+    def _handle_cell_clicked(self, row: int, column: int) -> None:
+        if column != DIAGNOSTICS_COLUMN_INDEX:
+            return
+        target_item = self._table.item(row, TARGET_COLUMN_INDEX)
+        if target_item is None:
+            return
+        target = target_item.text()
+        if self._diagnostics_status.get(target) != "completed":
+            return
+        self.diagnosticsViewRequested.emit(target)
 
     def _toggle_all_checkboxes(self, kind: str, state: int) -> None:
         checked = Qt.CheckState(state) == Qt.CheckState.Checked
@@ -311,6 +355,7 @@ class ResultGrid(QObject):
         self._table.setItem(row, ERROR_COLUMN_INDEX, self._make_item(error_text, Qt.AlignLeft))
         diag_label = self._diagnostics_status_label(result.diagnostics_status)
         self._table.setItem(row, DIAGNOSTICS_COLUMN_INDEX, self._make_item(diag_label, Qt.AlignCenter))
+        self._diagnostics_status[result.target] = result.diagnostics_status
         self._apply_row_style(row, result.priority)
 
     def _attach_row_checkboxes(self, row: int, target: str) -> None:

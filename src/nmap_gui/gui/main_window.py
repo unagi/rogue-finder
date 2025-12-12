@@ -17,6 +17,7 @@ from ..job_eta import JobEtaController
 from ..models import (
     ErrorRecord,
     HostScanResult,
+    SafeScanReport,
     ScanConfig,
     ScanLogEvent,
     ScanMode,
@@ -29,7 +30,7 @@ from .export_toolbar import ExportToolbar
 from .privileges import has_required_privileges, show_privileged_hint
 from .result_store import ResultStore
 from .safe_scan_controller import SafeScanController
-from .safe_scan_dialog import SafeScanDialog
+from .safe_scan_report_viewer import SafeScanReportViewer
 from .scan_controls import ScanControlsPanel, ScanControlsState
 from .scan_log_dialog import ScanLogDialog
 from .state_controller import StateController
@@ -68,10 +69,12 @@ class MainWindow(QMainWindow):
         self._result_grid.selectionChanged.connect(self._on_result_grid_selection_changed)
         self._result_grid.runAdvancedRequested.connect(self._on_run_advanced_clicked)
         self._result_grid.runSafetyRequested.connect(self._on_run_safety_clicked)
+        self._result_grid.diagnosticsViewRequested.connect(self._on_diagnostics_view_requested)
         self._summary_panel = SummaryPanel(self._t, self)
         self._export_toolbar = ExportToolbar(self._t, self)
         self._export_toolbar.export_csv_requested.connect(self._export_csv)
         self._export_toolbar.export_json_requested.connect(self._export_json)
+        self._report_viewer = SafeScanReportViewer(self._t, self._language, self)
         self._result_store = ResultStore(self._result_grid, self._summary_panel)
         self._scan_manager = ScanManager(self._settings)
         self._target_count = 0
@@ -104,7 +107,7 @@ class MainWindow(QMainWindow):
             is_scan_active=lambda: self._scan_active,
             set_diagnostics_status=self._set_diagnostics_status,
             clear_safety_selection=self._result_grid.clear_safety_selection_for_target,
-            dialog_factory=lambda report: SafeScanDialog(self, report, self._language),
+            store_diagnostics_report=self._store_diagnostics_report,
             estimate_parallel_seconds=self._estimate_parallel_total_seconds,
         )
         self._state_controller.apply(
@@ -132,8 +135,14 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(central)
         layout.addWidget(self._controls)
         layout.addWidget(self._result_grid.widget())
+        layout.addWidget(self._report_viewer)
         layout.addWidget(self._summary_panel)
         layout.addWidget(self._export_toolbar)
+        layout.setStretch(0, 0)
+        layout.setStretch(1, 2)
+        layout.setStretch(2, 1)
+        layout.setStretch(3, 0)
+        layout.setStretch(4, 0)
         self.setCentralWidget(central)
         self.statusBar().showMessage(self._t("ready"))
         self._update_summary()
@@ -292,6 +301,7 @@ class MainWindow(QMainWindow):
 
     def _on_stop_clicked(self) -> None:
         self._scan_manager.stop()
+        self._result_grid.finish_progress()
         self._pending_scan_configs.clear()
         self._active_scan_kind = None
         self._current_scan_targets = []
@@ -304,10 +314,10 @@ class MainWindow(QMainWindow):
             self._log_dialog.mark_scan_finished()
 
     def _on_scan_started(self, total: int) -> None:
-        self._controls.reset_progress(total)
+        self._result_grid.reset_progress(total)
 
     def _on_progress(self, done: int, total: int) -> None:
-        self._controls.set_progress(done, total)
+        self._result_grid.set_progress(done, total)
 
     def _on_result(self, result: HostScanResult) -> None:
         if self._active_scan_kind == "advanced":
@@ -320,6 +330,7 @@ class MainWindow(QMainWindow):
     def _reset_result_storage(self, *, emit_selection_changed: bool = True) -> None:
         self._result_store.reset(emit_selection_changed=emit_selection_changed)
         self._update_mac_limited_label()
+        self._report_viewer.clear_report()
 
     def _on_result_grid_selection_changed(self) -> None:
         self._refresh_action_buttons()
@@ -328,6 +339,23 @@ class MainWindow(QMainWindow):
     def _set_diagnostics_status(self, target: str, status: str) -> None:
         timestamp = datetime.now().astimezone().isoformat()
         self._result_store.set_diagnostics_status(target, status, timestamp)
+
+    def _store_diagnostics_report(self, report: SafeScanReport) -> None:
+        self._result_store.set_diagnostics_report(report.target, report)
+        current_target = self._report_viewer.current_target()
+        if current_target is None or current_target == report.target:
+            self._report_viewer.show_report(report)
+
+    def _on_diagnostics_view_requested(self, target: str) -> None:
+        report = self._result_store.diagnostics_report_for(target)
+        if report is None:
+            QMessageBox.information(
+                self,
+                self._t("diagnostics_viewer_missing_title"),
+                self._t("diagnostics_viewer_missing_body").format(target=target),
+            )
+            return
+        self._report_viewer.show_report(report)
 
     def _update_controls_state(self) -> None:
         if self._safe_scan_controller.is_active():
@@ -447,6 +475,7 @@ class MainWindow(QMainWindow):
         self._summary_has_error = True
         self._set_summary_state("summary_status_error")
         self._job_eta.stop("advanced")
+        self._result_grid.finish_progress()
         if self._log_dialog:
             self._log_dialog.mark_scan_finished()
 
@@ -461,6 +490,7 @@ class MainWindow(QMainWindow):
             self._ensure_log_dialog(next_config.targets, show=False, reset=True)
             self._scan_manager.start(next_config)
             return
+        self._result_grid.finish_progress()
         self._job_eta.stop("advanced")
         self._scan_active = False
         self._pending_scan_configs.clear()

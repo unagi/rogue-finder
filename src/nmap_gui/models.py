@@ -74,12 +74,27 @@ class HostScanResult:
     diagnostics_status: str = "not_started"
     diagnostics_updated_at: str | None = None
     is_placeholder: bool = False
+    diagnostics_report: "SafeScanReport | None" = None
 
     def to_dict(self) -> Dict[str, object]:
         """Return a JSON/export friendly representation."""
 
         data = asdict(self)
         data["errors"] = [error.to_dict() for error in self.errors]
+        report = self.diagnostics_report
+        if report:
+            data["diagnostics_report"] = {
+                "target": report.target,
+                "command": report.command,
+                "started_at": report.started_at.isoformat(),
+                "finished_at": report.finished_at.isoformat(),
+                "stdout": report.stdout,
+                "stderr": report.stderr,
+                "exit_code": report.exit_code,
+                "errors": [error.to_dict() for error in report.errors],
+            }
+        else:
+            data["diagnostics_report"] = None
         return data
 
 

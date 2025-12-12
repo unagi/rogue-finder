@@ -30,7 +30,7 @@ class SafeScanController:
         is_scan_active: Callable[[], bool],
         set_diagnostics_status: Callable[[str, str], None],
         clear_safety_selection: Callable[[str], None],
-        dialog_factory: Callable[[SafeScanReport], QWidget],
+        store_diagnostics_report: Callable[[SafeScanReport], None],
         estimate_parallel_seconds: Callable[[int, float, float, int], float],
     ) -> None:
         self._settings = settings
@@ -43,7 +43,7 @@ class SafeScanController:
         self._is_scan_active = is_scan_active
         self._set_diagnostics_status = set_diagnostics_status
         self._clear_safety_selection = clear_safety_selection
-        self._dialog_factory = dialog_factory
+        self._store_diagnostics_report = store_diagnostics_report
         self._estimate_parallel = estimate_parallel_seconds
 
         self._manager = SafeScriptManager(self._settings)
@@ -113,12 +113,10 @@ class SafeScanController:
         status = "completed" if report.success else "failed"
         self._set_diagnostics_status(report.target, status)
         self._clear_safety_selection(report.target)
-        dialog = self._dialog_factory(report)
-        dialog.exec()
-        if getattr(dialog, "saved_path", None):
-            self._status_callback(
-                self._translator("safe_scan_save_success_body").format(path=dialog.saved_path)
-            )
+        self._store_diagnostics_report(report)
+        self._status_callback(
+            self._translator("safe_scan_report_ready").format(target=report.target)
+        )
         self._record_duration(report.duration_seconds)
         self._refresh_actions()
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 import copy
 from typing import Dict, List, Sequence
 
-from ..models import HostScanResult
+from ..models import HostScanResult, SafeScanReport
 from ..result_grid import ResultGrid
 from .summary_panel import SummaryPanel
 
@@ -46,6 +46,8 @@ class ResultStore:
         existing.errors = list(new_result.errors)
         existing.detail_level = new_result.detail_level
         existing.detail_updated_at = new_result.detail_updated_at
+        if new_result.diagnostics_report is not None:
+            existing.diagnostics_report = new_result.diagnostics_report
 
     def set_diagnostics_status(self, target: str, status: str, timestamp: str) -> None:
         result = self._result_lookup.get(target)
@@ -54,6 +56,19 @@ class ResultStore:
         result.diagnostics_status = status
         result.diagnostics_updated_at = timestamp
         self._result_grid.update_result(result, allow_sort_restore=False)
+
+    def set_diagnostics_report(self, target: str, report: SafeScanReport) -> None:
+        result = self._result_lookup.get(target)
+        if not result:
+            return
+        result.diagnostics_report = report
+        self._result_grid.update_result(result, allow_sort_restore=False)
+
+    def diagnostics_report_for(self, target: str) -> SafeScanReport | None:
+        result = self._result_lookup.get(target)
+        if not result:
+            return None
+        return result.diagnostics_report
 
     def has_results(self) -> bool:
         return bool(self._results)
