@@ -31,9 +31,13 @@
   3. `uv pip install -r requirements-dev.txt` to get PySide6, pytest, pytest-spec, poethepoet, etc.
   4. Run the suite with `poe test` (this now shells out to `uv run pytest --spec`). Tests live under `tests/` and already cover `models.sanitize_targets` and rating heuristics.
   5. Run `poe lint` (backs `ruff check src tests`) before committing to keep packaging imports and style consistent.
-- Pull requests automatically run `poe lint` and `poe test` via `.github/workflows/pr-ci.yml`. Keep those tasks green before requesting review.
-- When packaging, rely on GitHub Actions PyInstaller workflow—every push to `main` builds Windows artifacts, tags trigger Windows + macOS outputs.
-- Tag pushes also kick off `.github/workflows/tag-changelog.yml`: the job runs `git-cliff` with `cliff.toml`, rewrites `CHANGELOG.md`, and opens a PR named `docs: update changelog for <tag>` so `main` always contains the latest release notes. Avoid hand-editing the changelog; regenerate locally via `git cliff -c cliff.toml -o CHANGELOG.md` if you need to preview.
+- Pull requests automatically run `poe lint` and `poe test` via `.github/workflows/ci.yml`. Keep those tasks green before requesting review.
+- When packaging, rely on `.github/workflows/pyinstaller.yml` (“Release Builds”)—pushes to `main` keep Windows artifacts fresh, and annotated tags trigger both Windows + macOS builds, release uploads, and the automated changelog PR step.
+- Avoid hand-editing the changelog; regenerate locally via `git cliff -c cliff.toml -o CHANGELOG.md` if you need to preview.
+
+## Development Mindset
+- Always validate external resources and migration guidance with Context7 first; only fall back to broader research if Context7 cannot resolve the issue.
+- Dockerfile problems usually surface during `docker build`, so run local builds whenever possible to reproduce and fix failures before pushing changes.
 
 ## Operational Notes
 - Users must install Nmap separately (README lists OS-specific commands). If `run_full_scan` can’t find Nmap it records the error in `HostScanResult.errors` so the GUI can surface it.
