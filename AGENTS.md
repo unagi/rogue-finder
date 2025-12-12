@@ -7,6 +7,7 @@
 
 ## Runtime Architecture
 - Entry point is `python -m nmap_gui.main` (or `src/nmap_gui/main.py`). It wires an `argparse --debug` flag, initializes `QApplication`, and shows `MainWindow`.
+- PyInstaller executes `main.py` as a top-level script, so keep absolute-import fallbacks (`from nmap_gui...`) next to the usual relative imports for `gui`, `config`, etc., or the packaged EXE will crash with “attempted relative import with no known parent package.”
 - `MainWindow` (`src/nmap_gui/gui.py`) owns the PySide6 widgets, collects targets/scopes, and emits `ScanConfig` objects.
 - `ScanManager`/`ScanWorker` (`src/nmap_gui/scan_manager.py`) bridge the GUI thread to multiprocessing. Each scan runs in a `ProcessPoolExecutor` using the `spawn` context so Windows builds work. Cancellation toggles a shared event checked between phases.
 - `run_full_scan` (`src/nmap_gui/nmap_runner.py`) executes up to three phases (ICMP `-sn -PE`, targeted TCP SYN `-sS` against `PORT_SCAN_LIST`, OS fingerprint `-O -Pn`). Each phase parses XML output to populate `HostScanResult` and then hands it to the rating engine.
@@ -28,6 +29,8 @@
   2. `uv venv && source .venv/bin/activate` (or preferred venv method).
   3. `uv pip install -r requirements-dev.txt` to get PySide6, pytest, pytest-spec, poethepoet, etc.
   4. Run the suite with `poe test` (this now shells out to `uv run pytest --spec`). Tests live under `tests/` and already cover `models.sanitize_targets` and rating heuristics.
+  5. Run `poe lint` (backs `ruff check src tests`) before committing to keep packaging imports and style consistent.
+- Pull requests automatically run `poe lint` and `poe test` via `.github/workflows/pr-ci.yml`. Keep those tasks green before requesting review.
 - When packaging, rely on GitHub Actions PyInstaller workflow—every push to `main` builds Windows artifacts, tags trigger Windows + macOS outputs.
 
 ## Operational Notes

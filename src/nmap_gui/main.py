@@ -16,7 +16,10 @@ except ImportError:  # pragma: no cover - fallback for direct script execution
     # context, so fall back to an absolute import to support that workflow.
     from nmap_gui.gui import MainWindow
 
-from .config import ConfigurationError, get_settings
+try:
+    from .config import ConfigurationError, get_settings
+except ImportError:  # pragma: no cover - mirrors gui fallback for PyInstaller
+    from nmap_gui.config import ConfigurationError, get_settings
 
 
 def build_arg_parser() -> argparse.ArgumentParser:

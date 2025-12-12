@@ -121,7 +121,7 @@ def run_nmap(
 
     try:
         proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired as exc:
+    except subprocess.TimeoutExpired:
         proc.kill()
         stdout_thread.join(timeout=1)
         stderr_thread.join(timeout=1)
