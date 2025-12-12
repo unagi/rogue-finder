@@ -123,6 +123,14 @@ _TRANSLATIONS: Dict[str, Translations] = {
         "error.worker_pool_failed.action": "Retry with fewer targets or restart the application.",
         "error.scan_crashed.message": "Scan execution crashed: {detail}.",
         "error.scan_crashed.action": "Review the log/targets, then run the scan again.",
+        "storage_warning_title": "Storage Error",
+        "storage_warning_body": "Failed to access configuration or state files. Continue without saving or exit?",
+        "storage_warning_continue": "Continue",
+        "storage_warning_exit": "Exit",
+        "storage_warning_line": "{scope} ({action}): {path}\n{detail}",
+        "storage_scope_config": "Configuration",
+        "storage_scope_state": "State",
+        "storage_action_write": "Write",
         "privileged_os_required_title": "Administrator privileges required",
         "privileged_os_required_body": (
             "OS fingerprinting requires elevated privileges on this platform.\n"
@@ -242,6 +250,14 @@ _TRANSLATIONS: Dict[str, Translations] = {
         "error.worker_pool_failed.action": "ターゲットを減らして再試行するか、アプリを再起動してください。",
         "error.scan_crashed.message": "スキャン実行で障害が発生しました: {detail}。",
         "error.scan_crashed.action": "ログとターゲットを確認し、再度スキャンしてください。",
+        "storage_warning_title": "保存エラー",
+        "storage_warning_body": "設定またはステートファイルにアクセスできません。保存せずに続行するか終了するか選択してください。",
+        "storage_warning_continue": "続行",
+        "storage_warning_exit": "終了",
+        "storage_warning_line": "{scope}（{action}）: {path}\n{detail}",
+        "storage_scope_config": "設定",
+        "storage_scope_state": "ステート",
+        "storage_action_write": "書き込み",
         "privileged_os_required_title": "管理者権限が必要です",
         "privileged_os_required_body": (
             "この環境で OS 指紋検出を行うには管理者権限が必要です。\n"

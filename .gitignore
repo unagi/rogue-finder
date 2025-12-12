@@ -11,3 +11,4 @@ dist/
 .vscode/
 rogue-finder.code-workspace
 rogue-finder.config.yaml
+rogue-finder.state.bin

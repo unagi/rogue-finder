@@ -11,7 +11,7 @@ from functools import partial
 from pathlib import Path
 from typing import Dict, List, Sequence, Set
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QByteArray, Qt, QTimer
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QApplication,
@@ -48,6 +48,8 @@ from .models import (
     sanitize_targets,
 )
 from .scan_manager import SafeScriptManager, ScanManager
+from .state_store import AppState, load_state, save_state
+from .storage_warnings import StorageWarning, consume_storage_warnings
 from .utils import slugify_filename_component
 
 
@@ -355,7 +357,7 @@ class ScanLogDialog(QDialog):
 class MainWindow(QMainWindow):
     """Primary top-level window."""
 
-    def __init__(self, settings: AppSettings | None = None) -> None:
+    def __init__(self, settings: AppSettings | None = None, state: AppState | None = None) -> None:
         super().__init__()
         self._settings = settings or get_settings()
         self._language = detect_language()
@@ -384,10 +386,20 @@ class MainWindow(QMainWindow):
         self._safe_scan_elapsed_start: float | None = None
         self._safe_progress_timer = QTimer(self)
         self._safe_progress_timer.timeout.connect(self._on_safe_progress_tick)
+        self._state_save_timer = QTimer(self)
+        self._state_save_timer.setSingleShot(True)
+        self._state_save_timer.setInterval(750)
+        self._state_save_timer.timeout.connect(self._persist_state)
         self._log_dialog: ScanLogDialog | None = None
+        self._disable_state_persistence = False
+        self._app_state = self._initialize_state(state)
         self._setup_scan_manager()
         self._setup_safe_scan_manager()
         self._build_ui()
+        self._apply_state_to_widgets()
+        self._connect_state_change_signals()
+        if not self._prompt_storage_warnings():
+            QTimer.singleShot(0, self.close)
 
     def _setup_scan_manager(self) -> None:
         self._scan_manager.started.connect(self._on_scan_started)
@@ -850,6 +862,10 @@ class MainWindow(QMainWindow):
         self._safe_scan_manager.stop()
         if self._log_dialog:
             self._log_dialog.close()
+        self._state_save_timer.stop()
+        if not self._persist_state(on_close=True):
+            event.ignore()
+            return
         super().closeEvent(event)
 
     def _export_csv(self) -> None:
@@ -889,6 +905,104 @@ class MainWindow(QMainWindow):
             return
         export_json(path, self._results, language=self._language)
         self.statusBar().showMessage(self._t("export_json_done").format(path=path))
+
+    def _initialize_state(self, provided: AppState | None) -> AppState:
+        if provided:
+            return provided
+        state = load_state()
+        if state:
+            return state
+        state = AppState()
+        if not save_state(state):
+            self._disable_state_persistence = True
+        return state
+
+    def _apply_state_to_widgets(self) -> None:
+        state = self._app_state
+        self.target_input.setPlainText(state.targets_text)
+        self.icmp_checkbox.setChecked(state.icmp_enabled)
+        self.port_checkbox.setChecked(state.ports_enabled)
+        self.os_checkbox.setChecked(state.os_enabled)
+        if state.window_geometry:
+            try:
+                self.restoreGeometry(QByteArray(state.window_geometry))
+            except TypeError:
+                pass
+
+    def _connect_state_change_signals(self) -> None:
+        self.target_input.textChanged.connect(self._on_form_state_changed)
+        self.icmp_checkbox.stateChanged.connect(self._on_form_state_changed)
+        self.port_checkbox.stateChanged.connect(self._on_form_state_changed)
+        self.os_checkbox.stateChanged.connect(self._on_form_state_changed)
+
+    def _on_form_state_changed(self, *_args) -> None:
+        if self._disable_state_persistence:
+            return
+        self._state_save_timer.start()
+
+    def _collect_state_from_widgets(self) -> AppState:
+        return AppState(
+            targets_text=self.target_input.toPlainText(),
+            icmp_enabled=self.icmp_checkbox.isChecked(),
+            ports_enabled=self.port_checkbox.isChecked(),
+            os_enabled=self.os_checkbox.isChecked(),
+            window_geometry=bytes(self.saveGeometry()),
+        )
+
+    def _persist_state(self, state: AppState | None = None, *, on_close: bool = False) -> bool:
+        if self._disable_state_persistence:
+            return True
+        snapshot = state or self._collect_state_from_widgets()
+        saved = save_state(snapshot)
+        if saved:
+            self._app_state = snapshot
+            return True
+        self._disable_state_persistence = True
+        self._state_save_timer.stop()
+        keep_running = self._prompt_storage_warnings()
+        if on_close:
+            return not keep_running
+        if not keep_running:
+            QTimer.singleShot(0, self.close)
+        return True
+
+    def _prompt_storage_warnings(self) -> bool:
+        warnings = consume_storage_warnings()
+        if not warnings:
+            return True
+        if any(w.scope == "state" for w in warnings):
+            self._disable_state_persistence = True
+        detail_text = "\n\n".join(self._format_storage_warning(w) for w in warnings)
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Warning)
+        dialog.setWindowTitle(self._t("storage_warning_title"))
+        dialog.setText(self._t("storage_warning_body"))
+        dialog.setInformativeText(detail_text)
+        continue_button = dialog.addButton(self._t("storage_warning_continue"), QMessageBox.ButtonRole.AcceptRole)
+        exit_button = dialog.addButton(self._t("storage_warning_exit"), QMessageBox.ButtonRole.RejectRole)
+        dialog.setDefaultButton(continue_button)
+        dialog.exec()
+        return dialog.clickedButton() is continue_button
+
+    def _format_storage_warning(self, warning: StorageWarning) -> str:
+        scope_label = self._storage_scope_label(warning.scope)
+        action_label = self._storage_action_label(warning.action)
+        return self._t("storage_warning_line").format(
+            scope=scope_label,
+            action=action_label,
+            path=str(warning.path),
+            detail=warning.detail,
+        )
+
+    def _storage_scope_label(self, scope: str) -> str:
+        key = f"storage_scope_{scope}"
+        label = translate(key, self._language)
+        return label if label != key else scope
+
+    def _storage_action_label(self, action: str) -> str:
+        key = f"storage_action_{action}"
+        label = translate(key, self._language)
+        return label if label != key else action
 
     def _has_required_privileges(self, modes: Set[ScanMode]) -> bool:
         """Return True when OS scans are either disabled or elevated privileges exist."""

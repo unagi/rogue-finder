@@ -3,11 +3,14 @@ from __future__ import annotations
 
 import argparse
 import copy
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, Tuple
 
 import yaml
+
+from .storage_warnings import record_storage_warning
 
 
 CONFIG_FILENAME = "rogue-finder.config.yaml"
@@ -208,10 +211,16 @@ def _read_or_create_config(path: Path) -> Dict[str, Any]:
     return loaded
 
 
-def _write_yaml(path: Path, data: Dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        yaml.safe_dump(data, handle, sort_keys=False, allow_unicode=False)
+def _write_yaml(path: Path, data: Dict[str, Any]) -> bool:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as handle:
+            yaml.safe_dump(data, handle, sort_keys=False, allow_unicode=False)
+    except OSError as exc:  # pragma: no cover - depends on system perms
+        LOGGER.warning("Failed to write configuration %s: %s", path, exc)
+        record_storage_warning(scope="config", action="write", path=path, detail=str(exc))
+        return False
+    return True
 
 
 def _merge_with_defaults(defaults: Dict[str, Any], user_values: Dict[str, Any]) -> Dict[str, Any]:
@@ -328,3 +337,5 @@ def main() -> None:  # pragma: no cover - CLI helper
 
 if __name__ == "__main__":  # pragma: no cover - CLI
     main()
+
+LOGGER = logging.getLogger(__name__)
