@@ -73,6 +73,7 @@ class HostScanResult:
     detail_updated_at: str | None = None
     diagnostics_status: str = "not_started"
     diagnostics_updated_at: str | None = None
+    is_placeholder: bool = False
 
     def to_dict(self) -> Dict[str, object]:
         """Return a JSON/export friendly representation."""

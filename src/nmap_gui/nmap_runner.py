@@ -258,9 +258,13 @@ def run_full_scan(
                 rated.append(apply_rating(item, rating_settings))
             return rated
         if errors or not _is_network_target(target):
-            placeholder = HostScanResult(target=target, errors=list(errors))
-            placeholder.detail_level = detail_label
-            placeholder.detail_updated_at = detail_timestamp
+            placeholder = HostScanResult(
+                target=target,
+                errors=list(errors),
+                is_placeholder=True,
+                detail_level=detail_label,
+                detail_updated_at=detail_timestamp,
+            )
             return [apply_rating(placeholder, rating_settings)]
         return []
 

@@ -1023,7 +1023,25 @@ class MainWindow(QMainWindow):
         if not self._scan_active and not self._safe_scan_active:
             self.start_button.setEnabled(True)
 
+    def _consume_placeholder_error(self, result: HostScanResult) -> bool:
+        if not result.is_placeholder:
+            return False
+        details = "\n".join(format_error_list(result.errors, self._language))
+        if not details:
+            details = self._t("placeholder_error_detail_missing")
+        QMessageBox.critical(
+            self,
+            self._t("placeholder_error_title").format(target=result.target),
+            self._t("placeholder_error_body").format(details=details),
+        )
+        self._summary_has_error = True
+        self._summary_status = self._t("placeholder_error_status")
+        self._update_summary()
+        return True
+
     def _handle_fast_result(self, result: HostScanResult) -> None:
+        if self._consume_placeholder_error(result):
+            return
         existing = self._result_lookup.get(result.target)
         if existing:
             self._merge_result(existing, result)
@@ -1034,6 +1052,8 @@ class MainWindow(QMainWindow):
             self._insert_row_for_result(result)
 
     def _handle_advanced_result(self, result: HostScanResult) -> None:
+        if self._consume_placeholder_error(result):
+            return
         existing = self._result_lookup.get(result.target)
         if existing:
             self._merge_result(existing, result)
