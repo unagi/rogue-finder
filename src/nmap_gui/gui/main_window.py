@@ -27,6 +27,7 @@ from ..models import (
 from ..result_grid import ResultGrid
 from ..scan_manager import ScanManager
 from ..state_store import AppState
+from .config_editor import ConfigEditorDialog
 from .export_toolbar import ExportToolbar
 from .privileges import has_required_privileges, show_privileged_hint
 from .result_store import ResultStore
@@ -63,10 +64,7 @@ class MainWindow(QMainWindow):
         self._active_scan_kind: str | None = None
         self._current_scan_targets: List[str] = []
         self._controls = ScanControlsPanel(self._t, self)
-        self._controls.start_requested.connect(self._on_start_clicked)
-        self._controls.stop_requested.connect(self._on_stop_clicked)
-        self._controls.clear_requested.connect(self._on_clear_results)
-        self._controls.log_requested.connect(self._on_show_log_clicked)
+        self._connect_control_signals()
         self._result_grid = ResultGrid(
             translator=self._t,
             language=self._language,
@@ -97,6 +95,7 @@ class MainWindow(QMainWindow):
         self._state_save_timer.setInterval(750)
         self._state_save_timer.timeout.connect(self._persist_state)
         self._log_dialog: ScanLogDialog | None = None
+        self._config_editor: ConfigEditorDialog | None = None
         self._setup_scan_manager()
         self._build_ui()
         self._job_eta = JobEtaController(
@@ -610,3 +609,38 @@ class MainWindow(QMainWindow):
             return
         if self._log_dialog:
             self._log_dialog.append_event(event)
+
+    def _connect_control_signals(self) -> None:
+        self._controls.start_requested.connect(self._on_start_clicked)
+        self._controls.stop_requested.connect(self._on_stop_clicked)
+        self._controls.clear_requested.connect(self._on_clear_results)
+        self._controls.log_requested.connect(self._on_show_log_clicked)
+        self._controls.config_editor_requested.connect(self._on_edit_config_requested)
+
+    def _on_edit_config_requested(self) -> None:
+        if self._scan_active or self._safe_scan_controller.is_active():
+            QMessageBox.information(
+                self,
+                self._t("config_editor_blocked_title"),
+                self._t("config_editor_blocked_body"),
+            )
+            return
+        if self._config_editor is None:
+            self._config_editor = ConfigEditorDialog(self._t, self)
+            self._config_editor.settingsUpdated.connect(self._apply_updated_settings)
+            self._config_editor.destroyed.connect(self._on_config_editor_destroyed)
+        self._config_editor.reload_from_disk()
+        self._config_editor.show()
+        self._config_editor.raise_()
+        self._config_editor.activateWindow()
+
+    def _on_config_editor_destroyed(self, _obj=None) -> None:
+        self._config_editor = None
+
+    def _apply_updated_settings(self, settings: AppSettings) -> None:
+        self._settings = settings
+        self._scan_manager.update_settings(settings)
+        self._safe_scan_controller.update_settings(settings)
+        self._result_grid.update_priority_colors(settings.ui.priority_colors)
+        self._update_mac_limited_label()
+        self.statusBar().showMessage(self._t("config_editor_status_applied"))

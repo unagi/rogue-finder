@@ -174,6 +174,10 @@ class ResultGrid(QObject):
                 self._run_advanced_with_os_button.setToolTip("")
         self._update_os_button_state()
 
+    def update_priority_colors(self, colors: Dict[str, str]) -> None:
+        self._priority_color_overrides = dict(colors)
+        self._refresh_row_styles()
+
     def _update_os_button_state(self) -> None:
         if self._run_advanced_with_os_button is None:
             return
@@ -484,6 +488,12 @@ class ResultGrid(QObject):
         if color_hex:
             return QColor(color_hex)
         return DEFAULT_PRIORITY_COLORS.get(priority)
+
+    def _refresh_row_styles(self) -> None:
+        for row in range(self._table.rowCount()):
+            item = self._table.item(row, PRIORITY_COLUMN_INDEX)
+            if item:
+                self._apply_row_style(row, item.text())
 
     def _handle_sort_request(self, column: int) -> None:
         if self._sort_column == column:

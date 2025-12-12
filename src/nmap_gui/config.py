@@ -16,6 +16,16 @@ from .storage_warnings import record_storage_warning
 CONFIG_FILENAME = "rogue-finder.config.yaml"
 
 
+def config_file_path(config_path: Path | str | None = None) -> Path:
+    """Return the resolved configuration file path."""
+
+    if config_path is None:
+        return Path.cwd() / CONFIG_FILENAME
+    if isinstance(config_path, Path):
+        return config_path
+    return Path(config_path)
+
+
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "version": 1,
     "scan": {
@@ -200,7 +210,7 @@ def reset_settings_cache() -> None:
 def load_settings(config_path: Path | str | None = None) -> AppSettings:
     """Load settings from YAML, creating or merging defaults as needed."""
 
-    path = Path(config_path) if config_path else Path.cwd() / CONFIG_FILENAME
+    path = config_file_path(config_path)
     try:
         data = _read_or_create_config(path)
     except yaml.YAMLError as exc:  # pragma: no cover - PyYAML formatting
@@ -219,6 +229,21 @@ def write_default_config(destination: Path | str) -> Path:
     target = Path(destination)
     _write_yaml(target, copy.deepcopy(DEFAULT_SETTINGS))
     return target
+
+
+def merge_with_defaults(user_values: Dict[str, Any] | None) -> Dict[str, Any]:
+    """Merge ``user_values`` with the default template without touching disk."""
+
+    if user_values is None:
+        user_values = {}
+    return _merge_with_defaults(copy.deepcopy(DEFAULT_SETTINGS), user_values)
+
+
+def write_settings(data: Dict[str, Any], config_path: Path | str | None = None) -> bool:
+    """Persist ``data`` to the configuration file location."""
+
+    path = config_file_path(config_path)
+    return _write_yaml(path, data)
 
 
 def _read_or_create_config(path: Path) -> Dict[str, Any]:
