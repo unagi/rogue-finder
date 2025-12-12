@@ -8,7 +8,6 @@ import shlex
 import sys
 import time
 from datetime import datetime
-from functools import partial
 from pathlib import Path
 from typing import Dict, List, Sequence, Set
 

@@ -290,7 +290,6 @@ class SafeScriptWorker(QObject):
                 }
                 completed = 0
                 for future in as_completed(futures):
-                    target = futures[future]
                     try:
                         report = future.result()
                     except Exception as exc:  # noqa: BLE001
