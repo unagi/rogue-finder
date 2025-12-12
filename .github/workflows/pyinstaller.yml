@@ -47,7 +47,8 @@ jobs:
             --name rogue-finder \
             --noconfirm \
             --onefile \
-            --windowed
+            --windowed \
+            --uac-admin
 
       - name: Normalize artifact layout
         shell: bash

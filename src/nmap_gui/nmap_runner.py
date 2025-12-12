@@ -9,7 +9,8 @@ import shutil
 import subprocess
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
-from typing import Dict, List, Sequence, Set, Tuple
+from threading import Thread
+from typing import Callable, Dict, List, Sequence, Set, Tuple
 
 from multiprocessing.synchronize import Event as MpEvent
 
@@ -20,7 +21,7 @@ from .error_codes import (
     ERROR_SCAN_ABORTED,
     build_error,
 )
-from .models import ErrorRecord, HostScanResult, ScanMode, SafeScanReport
+from .models import ErrorRecord, HostScanResult, ScanLogEvent, ScanMode, SafeScanReport
 from .rating import apply_rating
 
 LOGGER = logging.getLogger(__name__)
@@ -81,23 +82,79 @@ def ensure_nmap_available() -> str:
     return path
 
 
-def run_nmap(args: Sequence[str], timeout: int = DEFAULT_TIMEOUT) -> str:
+def run_nmap(
+    args: Sequence[str],
+    timeout: int = DEFAULT_TIMEOUT,
+    log_callback: Callable[[ScanLogEvent], None] | None = None,
+    log_target: str | None = None,
+    log_phase: ScanMode | None = None,
+) -> str:
     ensure_nmap_available()
     process_args = list(args) + ["-oX", "-"]
     LOGGER.debug("Executing nmap: %s", " ".join(process_args))
-    proc = subprocess.run(
+    proc = subprocess.Popen(
         process_args,
-        check=False,
         text=True,
-        capture_output=True,
-        timeout=timeout,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        bufsize=1,
+        universal_newlines=True,
         startupinfo=_WINDOWS_STARTUPINFO,
         creationflags=_WINDOWS_CREATION_FLAGS,
     )
+
+    stdout_chunks: List[str] = []
+    stderr_chunks: List[str] = []
+
+    def _pump_stream(stream, collector, stream_name: str) -> None:
+        try:
+            if stream is None:
+                return
+            for line in stream:
+                collector.append(line)
+                if log_callback and log_target:
+                    log_callback(
+                        ScanLogEvent(
+                            target=log_target,
+                            phase=log_phase,
+                            stream=stream_name,
+                            line=line.rstrip("\n"),
+                        )
+                    )
+        finally:
+            if stream is not None:
+                stream.close()
+
+    stdout_thread = Thread(
+        target=_pump_stream,
+        args=(proc.stdout, stdout_chunks, "stdout"),
+        name="nmap-stdout",
+        daemon=True,
+    )
+    stderr_thread = Thread(
+        target=_pump_stream,
+        args=(proc.stderr, stderr_chunks, "stderr"),
+        name="nmap-stderr",
+        daemon=True,
+    )
+    stdout_thread.start()
+    stderr_thread.start()
+
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        proc.kill()
+        stdout_thread.join(timeout=1)
+        stderr_thread.join(timeout=1)
+        raise
+
+    stdout_thread.join()
+    stderr_thread.join()
+
     if proc.returncode != 0:
-        detail = proc.stderr.strip() or f"nmap exited with status {proc.returncode}"
+        detail = "".join(stderr_chunks).strip() or f"nmap exited with status {proc.returncode}"
         raise NmapExecutionError(detail)
-    return proc.stdout
+    return "".join(stdout_chunks)
 
 
 def _extract_host_key(host_node: ET.Element, default: str) -> str:
@@ -168,11 +225,34 @@ def parse_os_guesses_by_host(
 
 
 def run_full_scan(
-    target: str, scan_modes: Set[ScanMode], cancel_event: MpEvent | None = None
+    target: str,
+    scan_modes: Set[ScanMode],
+    cancel_event: MpEvent | None = None,
+    log_callback: Callable[[ScanLogEvent], None] | None = None,
 ) -> List[HostScanResult]:
     errors: List[ErrorRecord] = []
     host_results: Dict[str, HostScanResult] = {}
     has_icmp_alive = False
+
+    def _emit_log(line: str, stream: str = "info", phase: ScanMode | None = None) -> None:
+        if not log_callback:
+            return
+        log_callback(
+            ScanLogEvent(
+                target=target,
+                phase=phase,
+                stream=stream,
+                line=line,
+            )
+        )
+
+    def _run_phase(args: Sequence[str], phase: ScanMode | None) -> str:
+        return run_nmap(
+            args,
+            log_callback=log_callback,
+            log_target=target,
+            log_phase=phase,
+        )
 
     def _ensure_host(host_key: str) -> HostScanResult:
         if host_key not in host_results:
@@ -200,7 +280,7 @@ def run_full_scan(
         if cancel_event and cancel_event.is_set():
             return _handle_cancel()
         if ScanMode.ICMP in scan_modes:
-            xml_text = run_nmap(["nmap", "-sn", "-PE", target])
+            xml_text = _run_phase(["nmap", "-sn", "-PE", target], ScanMode.ICMP)
             try:
                 alive_hosts = parse_icmp_hosts(xml_text, target)
             except ET.ParseError as exc:
@@ -218,20 +298,25 @@ def run_full_scan(
             port_list = ",".join(str(p) for p in PORT_SCAN_LIST)
             port_args = ["nmap", "-sS", "-p", port_list, target, "-T4"]
             try:
-                xml_text = run_nmap(port_args)
+                xml_text = _run_phase(port_args, ScanMode.PORTS)
             except NmapExecutionError as exc:
                 if _requires_privileged_scan(str(exc)):
                     LOGGER.info(
                         "SYN scan requires elevated privileges; retrying with TCP connect scan (-sT)."
                     )
-                    xml_text = run_nmap([
+                    _emit_log(
+                        "SYN scan requires elevated privileges; falling back to TCP connect scan (-sT).",
+                        stream="info",
+                        phase=ScanMode.PORTS,
+                    )
+                    xml_text = _run_phase([
                         "nmap",
                         "-sT",
                         "-p",
                         port_list,
                         target,
                         "-T4",
-                    ])
+                    ], ScanMode.PORTS)
                 else:
                     raise
             try:
@@ -249,7 +334,7 @@ def run_full_scan(
             has_icmp_alive or ScanMode.ICMP not in scan_modes
         )
         if should_scan_os:
-            xml_text = run_nmap(["nmap", "-O", "-Pn", target])
+            xml_text = _run_phase(["nmap", "-O", "-Pn", target], ScanMode.OS)
             try:
                 os_map = parse_os_guesses_by_host(xml_text, target)
             except ET.ParseError as exc:
@@ -278,7 +363,7 @@ def _format_cli_command(args: Sequence[str]) -> str:
 
 def run_safe_script_scan(target: str, timeout: int = DEFAULT_TIMEOUT) -> SafeScanReport:
     started_at = datetime.now(timezone.utc)
-    base_args = ["nmap", "-sV", "--script", "safe", target, "-T4"]
+    base_args = ["nmap", "--noninteractive", "-sV", "--script", "safe", target, "-T4"]
     stdout = ""
     stderr = ""
     exit_code: int | None = None
@@ -293,6 +378,7 @@ def run_safe_script_scan(target: str, timeout: int = DEFAULT_TIMEOUT) -> SafeSca
             text=True,
             capture_output=True,
             timeout=timeout,
+            stdin=subprocess.DEVNULL,
             startupinfo=_WINDOWS_STARTUPINFO,
             creationflags=_WINDOWS_CREATION_FLAGS,
         )

@@ -1,4 +1,4 @@
-from types import SimpleNamespace
+import io
 
 import pytest
 
@@ -73,18 +73,30 @@ def test_parse_os_guesses_by_host_defaults_when_missing():
 
 
 def test_run_nmap_raises_on_nonzero_exit(monkeypatch):
-    calls = {"run": 0}
+    class FakeProcess:
+        def __init__(self):
+            self.returncode = 1
+            self.stdout = io.StringIO("")
+            self.stderr = io.StringIO("permission denied\n")
 
-    def fake_run(*args, **kwargs):  # noqa: ANN001, ANN202 - pytest helper
-        calls["run"] += 1
-        return SimpleNamespace(returncode=1, stdout="", stderr="permission denied")
+        def wait(self, timeout=None):  # noqa: D401 - test helper
+            return self.returncode
+
+        def kill(self):
+            pass
+
+    created = {"count": 0}
+
+    def fake_popen(*args, **kwargs):  # noqa: ANN001, ANN202 - pytest helper
+        created["count"] += 1
+        return FakeProcess()
 
     monkeypatch.setattr(nmap_runner, "ensure_nmap_available", lambda: "/usr/bin/nmap")
-    monkeypatch.setattr(nmap_runner.subprocess, "run", fake_run)
+    monkeypatch.setattr(nmap_runner.subprocess, "Popen", fake_popen)
 
     with pytest.raises(nmap_runner.NmapExecutionError):
         nmap_runner.run_nmap(["nmap", "-sS", "127.0.0.1"])
-    assert calls["run"] == 1
+    assert created["count"] == 1
 
 
 def test_run_full_scan_converts_parse_errors_to_rf004(monkeypatch):
@@ -101,7 +113,7 @@ def test_run_full_scan_converts_parse_errors_to_rf004(monkeypatch):
 def test_run_full_scan_falls_back_to_tcp_connect_when_syn_requires_root(monkeypatch):
     calls = []
 
-    def fake_run_nmap(args, timeout=nmap_runner.DEFAULT_TIMEOUT):  # noqa: ANN001, ANN202 - pytest helper
+    def fake_run_nmap(args, timeout=nmap_runner.DEFAULT_TIMEOUT, **kwargs):  # noqa: ANN001, ANN202 - helper
         calls.append(args)
         if "-sS" in args:
             raise nmap_runner.NmapExecutionError(

@@ -5,6 +5,8 @@ import multiprocessing as mp
 import os
 import sys
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from functools import partial
+from threading import Thread
 
 try:  # Python embedded in PyInstaller on Windows may lack BrokenProcessPool
     from concurrent.futures import BrokenProcessPool
@@ -12,7 +14,7 @@ except ImportError:  # pragma: no cover - fallback for runtimes missing the clas
     class BrokenProcessPool(RuntimeError):  # type: ignore[override]
         """Compatibility placeholder so exception handling still works."""
 from multiprocessing.connection import Connection
-from typing import Optional
+from typing import Dict, Optional
 
 from PySide6.QtCore import QObject, QThread, Signal, Slot
 
@@ -21,9 +23,18 @@ from .error_codes import (
     ERROR_WORKER_POOL_FAILED,
     build_error,
 )
-from .models import ScanConfig
+from .models import ScanConfig, ScanLogEvent
 from .nmap_runner import run_full_scan, run_safe_script_scan
 from .cancel_token import PipeCancelToken, create_pipe_cancel_token
+
+
+def _send_log_event(connection: Connection | None, event: ScanLogEvent) -> None:
+    if connection is None:
+        return
+    try:
+        connection.send(event)
+    except (BrokenPipeError, OSError):
+        pass
 
 
 def _should_use_threads() -> bool:
@@ -37,6 +48,7 @@ class ScanWorker(QObject):
     result_ready = Signal(object)
     error = Signal(object)
     finished = Signal()
+    log_ready = Signal(object)
 
     def __init__(self, config: ScanConfig):
         super().__init__()
@@ -46,6 +58,8 @@ class ScanWorker(QObject):
         self._cancel_token: Optional[PipeCancelToken] = None
         self._init_cancel_token()
         self._use_threads = _should_use_threads()
+        self._log_receivers: list[Connection] = []
+        self._log_threads: list[Thread] = []
 
     @Slot()
     def start(self) -> None:
@@ -63,15 +77,29 @@ class ScanWorker(QObject):
             if not self._use_threads:
                 executor_kwargs["mp_context"] = ctx
             with executor_cls(**executor_kwargs) as executor:
-                futures = {
-                    executor.submit(
-                        run_full_scan,
-                        target,
-                        self._config.scan_modes,
-                        self._cancel_token,
-                    ): target
-                    for target in targets
-                }
+                futures: Dict[object, str] = {}
+                log_channels: Dict[object, Connection] = {}
+                for target in targets:
+                    connection = self._create_log_channel()
+                    log_callback = partial(_send_log_event, connection) if connection else None
+                    try:
+                        future = executor.submit(
+                            run_full_scan,
+                            target,
+                            self._config.scan_modes,
+                            self._cancel_token,
+                            log_callback,
+                        )
+                    except Exception:
+                        if connection is not None:
+                            try:
+                                connection.close()
+                            except OSError:
+                                pass
+                        raise
+                    futures[future] = target
+                    if connection is not None:
+                        log_channels[future] = connection
                 completed = 0
                 for future in as_completed(futures):
                     if self._cancel_token and self._cancel_token.is_set():
@@ -97,9 +125,21 @@ class ScanWorker(QObject):
                     self.progress.emit(completed, total)
                     if self._cancel_token and self._cancel_token.is_set():
                         break
+                    conn = log_channels.pop(future, None)
+                    if conn is not None:
+                        try:
+                            conn.close()
+                        except OSError:
+                            pass
+                for conn in log_channels.values():
+                    try:
+                        conn.close()
+                    except OSError:
+                        pass
         finally:
             self.finished.emit()
             self._close_cancel_token()
+            self._close_log_receivers()
 
     def request_stop(self) -> None:
         if self._cancel_tx is not None:
@@ -121,6 +161,45 @@ class ScanWorker(QObject):
             self._cancel_token.close()
         self._cancel_token = None
 
+    def _create_log_channel(self) -> Connection | None:
+        try:
+            rx, tx = self._mp_context.Pipe(duplex=False)
+        except (OSError, ValueError):
+            return None
+        thread = Thread(target=self._relay_log_events, args=(rx,), daemon=True)
+        thread.start()
+        self._log_receivers.append(rx)
+        self._log_threads.append(thread)
+        return tx
+
+    def _relay_log_events(self, connection: Connection) -> None:
+        try:
+            while True:
+                try:
+                    event = connection.recv()
+                except EOFError:
+                    break
+                except (OSError, ValueError):
+                    break
+                else:
+                    self.log_ready.emit(event)
+        finally:
+            try:
+                connection.close()
+            except OSError:
+                pass
+
+    def _close_log_receivers(self) -> None:
+        for conn in self._log_receivers:
+            try:
+                conn.close()
+            except OSError:
+                pass
+        self._log_receivers.clear()
+        for thread in self._log_threads:
+            thread.join(timeout=0.1)
+        self._log_threads.clear()
+
 
 class ScanManager(QObject):
     progress = Signal(int, int)
@@ -128,6 +207,7 @@ class ScanManager(QObject):
     error = Signal(object)
     started = Signal(int)
     finished = Signal()
+    log_ready = Signal(object)
 
     def __init__(self) -> None:
         super().__init__()
@@ -143,6 +223,7 @@ class ScanManager(QObject):
         self._worker.progress.connect(self.progress)
         self._worker.result_ready.connect(self.result_ready)
         self._worker.error.connect(self.error)
+        self._worker.log_ready.connect(self.log_ready)
         self._worker.finished.connect(self._thread.quit)
         self._worker.finished.connect(self.finished)
         self._thread.finished.connect(self._cleanup_thread)
