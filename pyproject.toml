@@ -29,4 +29,9 @@ target-version = "py311"
 line-length = 100
 
 [tool.ruff.lint]
-extend-select = ["B", "C90", "SIM"]
+extend-select = ["B", "C90", "SIM", "PLR"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/nmap_gui/gui/safe_scan_controller.py" = ["PLR0913"]
+"src/nmap_gui/gui/state_controller.py" = ["PLR0913"]
+"src/nmap_gui/nmap_runner.py" = ["PLR0913"]

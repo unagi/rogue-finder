@@ -7,6 +7,9 @@ from nmap_gui.i18n import format_error_record
 from nmap_gui.models import HostScanResult
 
 
+ICMP_POINTS = 2
+
+
 def _sample_result() -> HostScanResult:
     return HostScanResult(
         target="10.0.0.5",
@@ -15,7 +18,7 @@ def _sample_result() -> HostScanResult:
         os_guess="Windows 10",
         os_accuracy=98,
         high_ports=[50000],
-        score_breakdown={"icmp": 2, "port 22": 2},
+        score_breakdown={"icmp": ICMP_POINTS, "port 22": 2},
         score=7,
         priority="Medium",
         errors=[build_error(ERROR_SCAN_ABORTED)],
@@ -42,7 +45,7 @@ def test_export_json_serializes_full_object(tmp_path):
     data = json.loads(json_path.read_text(encoding="utf-8"))
     assert data[0]["target"] == "10.0.0.5"
     assert data[0]["priority"] == "Medium"
-    assert data[0]["score_breakdown"]["icmp"] == 2
+    assert data[0]["score_breakdown"]["icmp"] == ICMP_POINTS
     assert data[0]["errors"][0]["code"] == "RF001"
     expected_error = format_error_record(result.errors[0], "en")
     assert data[0]["errors_text"][0] == expected_error

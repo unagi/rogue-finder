@@ -7,6 +7,7 @@ from nmap_gui.models import ScanMode
 
 
 MAC_WITHOUT_ROOT = nmap_runner._is_macos() and not nmap_runner._has_root_privileges()
+EXPECTED_CIDR_HOSTS = 2
 
 
 ICMP_XML = """
@@ -194,7 +195,7 @@ def test_run_full_scan_returns_multiple_hosts_for_cidr(monkeypatch):
         {ScanMode.ICMP, ScanMode.PORTS, ScanMode.OS},
     )
 
-    assert len(results) == 2
+    assert len(results) == EXPECTED_CIDR_HOSTS
     by_target = {item.target: item for item in results}
     assert by_target["192.168.100.11"].open_ports == [22]
     assert by_target["192.168.100.13"].open_ports == [80]
@@ -210,4 +211,3 @@ def test_run_full_scan_marks_host_alive_when_only_ports(monkeypatch):
 
     assert results
     assert results[0].is_alive is True
-
