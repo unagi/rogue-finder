@@ -7,6 +7,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from threading import Thread
@@ -50,6 +51,17 @@ class NmapExecutionError(RuntimeError):
 
 class NmapNotInstalledError(RuntimeError):
     """Raised when nmap binary is not on PATH."""
+
+
+def _is_macos() -> bool:
+    return sys.platform == "darwin"
+
+
+def _has_root_privileges() -> bool:
+    geteuid = getattr(os, "geteuid", None)
+    if callable(geteuid):
+        return geteuid() == 0
+    return True
 
 
 def ensure_nmap_available() -> str:
@@ -221,6 +233,7 @@ def run_full_scan(
     host_results: Dict[str, HostScanResult] = {}
     has_icmp_alive = False
     detail_timestamp = datetime.now(timezone.utc).isoformat()
+    mac_without_root = _is_macos() and not _has_root_privileges()
 
     def _emit_log(line: str, stream: str = "info", phase: ScanMode | None = None) -> None:
         if not log_callback:
@@ -277,7 +290,17 @@ def run_full_scan(
         if cancel_event and cancel_event.is_set():
             return _handle_cancel()
         if ScanMode.ICMP in scan_modes:
-            xml_text = _run_phase(["nmap", "-sn", "-PE", target], ScanMode.ICMP)
+            icmp_args: List[str]
+            if mac_without_root:
+                icmp_args = ["nmap", "-sn", "-PA80,443", target, "-T4"]
+                _emit_log(
+                    "macOS without root privileges detected – using TCP ping scan (-PA80,443).",
+                    stream="info",
+                    phase=ScanMode.ICMP,
+                )
+            else:
+                icmp_args = ["nmap", "-sn", "-PE", target]
+            xml_text = _run_phase(icmp_args, ScanMode.ICMP)
             try:
                 alive_hosts = parse_icmp_hosts(xml_text, target)
             except ET.ParseError as exc:
@@ -295,6 +318,13 @@ def run_full_scan(
             selected_ports = custom_port_list or scan_settings.port_scan_list
             port_list = ",".join(str(p) for p in selected_ports)
             port_args = ["nmap", "-sS", "-p", port_list, target, "-T4"]
+            if mac_without_root:
+                port_args[1] = "-sT"
+                _emit_log(
+                    "macOS without root privileges detected – using TCP connect scan (-sT).",
+                    stream="info",
+                    phase=ScanMode.PORTS,
+                )
             try:
                 xml_text = _run_phase(port_args, ScanMode.PORTS)
             except NmapExecutionError as exc:
@@ -331,6 +361,13 @@ def run_full_scan(
         should_scan_os = ScanMode.OS in scan_modes and (
             has_icmp_alive or ScanMode.ICMP not in scan_modes
         )
+        if should_scan_os and mac_without_root:
+            _emit_log(
+                "Skipping OS detection because macOS GUI builds run without root privileges.",
+                stream="info",
+                phase=ScanMode.OS,
+            )
+            should_scan_os = False
         if should_scan_os:
             xml_text = _run_phase(["nmap", "-O", "-Pn", target], ScanMode.OS)
             try:

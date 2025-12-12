@@ -411,6 +411,7 @@ class MainWindow(QMainWindow):
         self._safe_scan_batch_total = 0
         self._safe_scan_batch_expected_duration = self._safe_scan_expected_duration
         self._safe_scan_completed = 0
+        self._mac_warning_shown = False
         self._safe_progress_timer = QTimer(self)
         self._safe_progress_timer.timeout.connect(self._on_safe_progress_tick)
         self._state_save_timer = QTimer(self)
@@ -424,6 +425,7 @@ class MainWindow(QMainWindow):
         self._setup_safe_scan_manager()
         self._build_ui()
         self._apply_state_to_widgets()
+        self._maybe_show_macos_warning()
         self._connect_state_change_signals()
         if not self._prompt_storage_warnings():
             QTimer.singleShot(0, self.close)
@@ -1037,6 +1039,25 @@ class MainWindow(QMainWindow):
         self._summary_has_error = True
         self._summary_status = self._t("placeholder_error_status")
         self._update_summary()
+        return True
+
+    def _maybe_show_macos_warning(self) -> None:
+        if self._mac_warning_shown or not self._is_macos_limited():
+            return
+        QMessageBox.warning(
+            self,
+            self._t("mac_limited_title"),
+            self._t("mac_limited_body"),
+        )
+        self._mac_warning_shown = True
+
+    def _is_macos_limited(self) -> bool:
+        return sys.platform == "darwin" and not self._running_as_root()
+
+    def _running_as_root(self) -> bool:
+        geteuid = getattr(os, "geteuid", None)
+        if callable(geteuid):
+            return geteuid() == 0
         return True
 
     def _handle_fast_result(self, result: HostScanResult) -> None:

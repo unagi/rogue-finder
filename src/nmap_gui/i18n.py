@@ -117,6 +117,11 @@ _TRANSLATIONS: Dict[str, Translations] = {
         "placeholder_error_body": "The scan could not run for the selected range.\nDetails:\n{details}",
         "placeholder_error_status": "Discovery failed",
         "placeholder_error_detail_missing": "(no additional details)",
+        "mac_limited_title": "Limited macOS mode",
+        "mac_limited_body": (
+            "macOS launches GUI apps without root privileges, so ICMP, SYN, and OS fingerprint phases fall back "
+            "to TCP-only scans. Run the CLI with sudo or use the Windows build for full coverage."
+        ),
         "diagnostics_status_not_started": "Idle",
         "diagnostics_status_running": "Running",
         "diagnostics_status_completed": "Done",
@@ -277,6 +282,11 @@ _TRANSLATIONS: Dict[str, Translations] = {
         "placeholder_error_body": "指定レンジに対するスキャンを実行できませんでした。\n詳細:\n{details}",
         "placeholder_error_status": "ディスカバリ失敗",
         "placeholder_error_detail_missing": "追加の詳細はありません",
+        "mac_limited_title": "macOS 制限モード",
+        "mac_limited_body": (
+            "macOS では GUI を通常ユーザーで起動するため、ICMP / SYN / OS フェーズが TCP ベースのスキャンに"
+            "自動ダウングレードされます。完全な機能が必要な場合は sudo で CLI を実行するか Windows 版を利用してください。"
+        ),
         "diagnostics_status_not_started": "未実行",
         "diagnostics_status_running": "実行中",
         "diagnostics_status_completed": "完了",

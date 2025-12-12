@@ -10,7 +10,7 @@
 - PyInstaller executes `main.py` as a top-level script, so keep absolute-import fallbacks (`from nmap_gui...`) next to the usual relative imports for `gui`, `config`, etc., or the packaged EXE will crash with “attempted relative import with no known parent package.”
 - `MainWindow` (`src/nmap_gui/gui.py`) owns the PySide6 widgets, collects targets/scopes, and emits `ScanConfig` objects.
 - `ScanManager`/`ScanWorker` (`src/nmap_gui/scan_manager.py`) bridge the GUI thread to multiprocessing. Each scan runs in a `ProcessPoolExecutor` using the `spawn` context so Windows builds work. Cancellation toggles a shared event checked between phases.
-- `run_full_scan` (`src/nmap_gui/nmap_runner.py`) executes up to three phases (ICMP `-sn -PE`, targeted TCP SYN `-sS` against `PORT_SCAN_LIST`, OS fingerprint `-O -Pn`). Each phase parses XML output to populate `HostScanResult` and then hands it to the rating engine.
+- `run_full_scan` (`src/nmap_gui/nmap_runner.py`) executes up to three phases (ICMP `-sn -PE`, targeted TCP SYN `-sS` against `PORT_SCAN_LIST`, OS fingerprint `-O -Pn`). On macOS without root privileges the runner automatically downgrades to TCP ping (`-PA`) and TCP connect (`-sT`) scans and skips OS fingerprinting to avoid raw-socket failures. Each phase parses XML output to populate `HostScanResult` and then hands it to the rating engine.
 - Export buttons call `exporters.export_csv/json` to produce UTF-8 CSV/JSON files. Score breakdowns get JSON-dumped so analysts can trace how a score was formed.
 
 ## Rating System Essentials
@@ -38,6 +38,7 @@
 - Users must install Nmap separately (README lists OS-specific commands). If `run_full_scan` can’t find Nmap it records the error in `HostScanResult.errors` so the GUI can surface it.
 - GUI target input accepts comma, newline, tab, semicolon separators—`sanitize_targets` normalizes these before deduplication.
 - Multiprocessing spawn plus `freeze_support()` keeps the PyInstaller build stable on Windows.
+- macOS builds run as regular users (no code signing / helper), so ICMP/SYN/OS phases fall back to TCP-only behavior; warn users in the GUI and README to prefer Windows for full coverage or run the CLI with `sudo` when necessary.
 - CSV/JSON exports include score breakdowns and error strings so analysts can audit decisions without rerunning scans.
 - Keep dependencies minimal to maintain OSS friendliness; new libraries should be justified.
 
