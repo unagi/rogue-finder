@@ -50,8 +50,8 @@ jobs:
             --windowed \
             --uac-admin \
             --icon assets/icons/rogue-finder.ico \
-            --add-data=assets/icons/rogue-finder.ico;assets/icons \
-            --add-data=assets/icons/icon_master.png;assets/icons
+            "--add-data=assets/icons/rogue-finder.ico:assets/icons" \
+            "--add-data=assets/icons/icon_master.png:assets/icons"
 
       - name: Normalize artifact layout
         shell: bash
@@ -106,8 +106,8 @@ jobs:
             --onefile \
             --windowed \
             --icon assets/icons/rogue-finder.icns \
-            --add-data=assets/icons/rogue-finder.icns:assets/icons \
-            --add-data=assets/icons/icon_master.png:assets/icons
+            "--add-data=assets/icons/rogue-finder.icns:assets/icons" \
+            "--add-data=assets/icons/icon_master.png:assets/icons"
 
       - name: Normalize artifact layout
         shell: bash
