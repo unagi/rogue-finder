@@ -1,120 +1,105 @@
 # Nmap GUI Discovery & Rating Tool
 
-Cross-platform PySide6 desktop application that orchestrates light-weight Nmap discovery jobs and ranks hosts based on custom heuristics defined in `nmap_gui_system_spec.md`. The GUI runs on Windows, macOS, and Linux without bundling Nmap itself, but Windows currently offers the most complete feature set (see **Platform Recommendations** below).
+[![CI](https://github.com/unagi/rogue-finder/actions/workflows/ci.yml/badge.svg)](https://github.com/unagi/rogue-finder/actions/workflows/ci.yml)
+[![Release Builds](https://github.com/unagi/rogue-finder/actions/workflows/pyinstaller.yml/badge.svg)](https://github.com/unagi/rogue-finder/actions/workflows/pyinstaller.yml)
+[![Latest Release](https://img.shields.io/github/v/release/unagi/rogue-finder?sort=semver)](https://github.com/unagi/rogue-finder/releases)
 
-## Features
-- ICMP, targeted TCP port, and OS fingerprint phases executed through the local `nmap` binary
-- Concurrent scanning via `ProcessPoolExecutor` with cancel support
-- Automatic rating engine aligned with the provided scoring tables
-- Rich table view with inline priority colors plus CSV / JSON export buttons
-- One-click per-target `nmap --script safe` diagnostics with bounded concurrency (default 2) and text report export
-- Detailed mapping between GUI actions and the exact `nmap` commands they invoke lives in [docs/scan_execution.md](docs/scan_execution.md).
+PySide6 desktop application that orchestrates lightweight Nmap discovery jobs, ranks hosts via a transparent heuristic model, and exports audit-friendly evidence so analysts can focus commercial scanners where it matters most.
 
-## Prerequisites
-1. Python 3.11+
-2. `pip install -r requirements.txt`
-3. Install Nmap separately and ensure the `nmap` binary is on your `PATH`:
-   - **Windows**: install from <https://nmap.org/download.html>, then restart the terminal so `nmap.exe` is visible
-   - **macOS**: `brew install nmap` (or install the dmg from nmap.org). GUI builds run without elevated privileges, so ICMP/SYN/OS phases fall back to TCP connect-only mode unless you explicitly run the CLI with `sudo`.
+**Highlights**
+- ICMP, targeted port, OS, and safe-script phases launched through the local `nmap` binary (never bundled).
+- Cross-platform (Windows/macOS/Linux) with PyInstaller packaging artifacts published by GitHub Actions.
+- Deterministic scoring engine with CSV/JSON exports containing score breakdowns and error context.
 
-## Run
-```bash
-python -m nmap_gui.main
-```
-Add `--debug` for verbose logging.
+## Quick Links
+- User Manual (English): [`docs/rogue_finder_manual_en.md`](docs/rogue_finder_manual_en.md)
+- ユーザーマニュアル (日本語): [`docs/rogue_finder_manual_ja.md`](docs/rogue_finder_manual_ja.md)
+- Scan execution reference: [`docs/scan_execution.md`](docs/scan_execution.md)
+- Agent/developer briefing: [`AGENTS.md`](AGENTS.md)
+- Changelog: [`CHANGELOG.md`](CHANGELOG.md)
 
-## Usage
-1. Enter single IPs, ranges, or CIDR blocks (one per line or comma-separated)
-2. Select scan phases (all enabled by default)
-3. Click **Start** to launch concurrent scans, **Stop** to cancel
-4. Review results in the table – rows are tinted by priority (High / Medium / Low)
-5. Export via CSV or JSON once results are available
-6. Use the new **Safe Script** action on any discovered host to launch a serialized `nmap --script safe` run; results open in a dedicated dialog where you can review the command/output and save a timestamped text report
+## Quick Start (Developers)
+1. **Install prerequisites**
+   - Python 3.11+
+   - [uv](https://docs.astral.sh/uv/) (required because Poe tasks shell out via `uv run`)
+   - Locally installed Nmap (`nmap` must be on `PATH`).
+2. **Bootstrap the repo**
+   ```bash
+   uv venv
+   source .venv/bin/activate    # Windows: .venv\Scripts\activate
+   uv pip install -r requirements-dev.txt
+   ```
+3. **Run lint/tests**
+   ```bash
+   poe lint
+   poe test
+   ```
+4. **Launch the GUI**
+   ```bash
+   python -m nmap_gui.main --debug
+   ```
 
-## Configuration
-Rogue Finder automatically ensures a `rogue-finder.config.yaml` file exists in the directory you launch the app from (next to the PyInstaller binary or your working tree). If the file is missing it is created with defaults; when the schema grows in future releases, missing keys are added automatically while your existing overrides stay intact.
+### User Workflow (at a glance)
+1. Paste IPs/CIDRs/hostnames (comma/newline/tab separators are OK).
+2. Leave ICMP/Ports/OS phases enabled or toggle as needed.
+3. Click **Start** to queue discovery jobs; **Stop** cancels in-flight work.
+4. Review prioritized results (High/Medium/Low) and export CSV/JSON or run Safe Script diagnostics.
+5. 詳細手順・FAQはユーザーマニュアル（英語/日本語）をご参照ください。
 
-Key sections you can tune:
+## Rating Model Overview
+The rules that previously lived in `nmap_gui_system_spec.md` are summarized here for convenience:
 
-- `scan`: timeout per phase (`default_timeout_seconds`), port list (`port_scan_list`), and the high-port cutoff considered interesting.
-- `rating`: ICMP/port/OS weights plus combo bonuses and priority thresholds.
-- `ui`: priority row colors (hex strings).
-- `safe_scan`: simulated progress timings for the safe-script dialog.
+- **Alive detection:** +2 when ICMP (or the TCP fallback) proves that the host responded.
+- **Port weights:** `PORT_WEIGHTS` emphasizes remote-admin ports such as 21/445/3389/5985 (typically +2 each) while database/dev/service ports like 3306/5432/8080/5672/15672 contribute +1. Update the dictionary inside `rating.py` when adding new ports.
+- **High-port bonus:** +1 when TCP 50000 is open, signalling ad-hoc services.
+- **OS strings:** Windows and SOHO/IoT fingerprints score +3, legacy Linux targets +2, generic Linux +1, and unknowns still receive +1 so they remain sortable.
+- **Combo bonuses:** +1 for ssh+db pairs ({22 & (3306 or 5432)}), +1 for 3389 & 1433 together, and +2 when 8080, 5672, and 15672 all respond.
+- **Priority bands:** Scores `>=8` are **High**, `5-7` are **Medium**, and `<5` are **Low**; the GUI maps these to `PRIORITY_COLORS` for row tinting.
 
-Because the file is human-friendly YAML, you can version-control it per environment or ship different defaults for specific teams. Use the helper command below to dump the latest template without launching the GUI:
+Tuning `rogue-finder.config.yaml` → `rating` changes these weights at runtime, and `rating.apply_rating` is covered by `poe test`.
 
+## Configuration Snapshot
+Rogue Finder ensures `rogue-finder.config.yaml` exists in the directory you launch from. If absent, defaults are generated and future schema updates backfill missing keys without touching overrides.
+
+Key sections:
+- `scan` – per-phase timeouts (`default_timeout_seconds`, `advanced_timeout_seconds`), fast/full port lists, high-port cutoff, worker parallelism.
+- `rating` – ICMP/port/OS weights plus combo bonuses and priority thresholds.
+- `ui` – priority row colors.
+- `safe_scan` – Safe Script concurrency, timeout, and ETA smoothing knobs.
+
+Generate a fresh template anytime:
 ```bash
 python -m nmap_gui.config --write-default ./rogue-finder.config.yaml
 ```
 
-### Safe Script Diagnostics
+## Architecture Snapshot
+- `src/nmap_gui/gui.py` – `MainWindow` widgets, target input handling, and scan orchestration controls.
+- `src/nmap_gui/scan_manager.py` – bridges Qt signals to a `ProcessPoolExecutor` (spawn context) and handles cancellation.
+- `src/nmap_gui/nmap_runner.py` – wraps `nmap` subprocess calls, parses XML outputs, and emits `HostScanResult` objects.
+- `src/nmap_gui/rating.py` – deterministic scoring engine and priority band helpers.
+- `src/nmap_gui/exporters.py` – UTF-8 CSV/JSON exporters with score/error breakdowns.
+- `docs/scan_execution.md` – exact CLI invocations for Fast/Advanced/Safe actions.
 
-- The diagnostics button appears next to every discovered target once the discovery scan returns results.
-- Safe-script runs observe the `safe_scan.max_parallel` limit (default 2) so you can process a small batch concurrently without overwhelming the host; discovery scans must be idle before launching diagnostics.
-- While the diagnostic is active the primary Start/Stop controls and all Safe Script buttons are disabled; the status bar shows which target is currently being evaluated.
-- When the run finishes a modal dialog summarizes the execution context, stdout/stderr, and any structured errors. Use **Save Report** to persist the textual transcript; filenames default to `safe-scan_<target>_<timestamp>.txt` to avoid accidental overwrites.
-- A dedicated progress bar simulates movement based on a 10-minute baseline (matching `safe_scan.default_duration_seconds`) and automatically stretches if the session's average runtime exceeds that baseline, so "stuck" scans still show forward progress.
-- The ETA shown for both advanced discovery and Safe Script now factors in (a) how many hosts are queued, (b) each phase's worker parallelism, and (c) the per-host timeout. The first batch assumes the full timeout to avoid over-promising, then shortens future estimates using the observed runtimes recorded in the session history.
+## Documentation Hub
+- Discovery/diagnostics command matrix: [`docs/scan_execution.md`](docs/scan_execution.md)
+- User manuals (EN/JA): see [Quick Links](#quick-links)
+- Agent/developer process notes: [`AGENTS.md`](AGENTS.md)
+- Release notes & automation details: [`CHANGELOG.md`](CHANGELOG.md) and [Release Builds workflow](https://github.com/unagi/rogue-finder/actions/workflows/pyinstaller.yml)
 
-## Internals
-- `src/nmap_gui/gui.py`: PySide6 widgets and UX wiring
-- `src/nmap_gui/scan_manager.py`: bridges GUI signals to multiprocessing workers
-- `src/nmap_gui/nmap_runner.py`: subprocess wrapper plus XML parsers
-- `src/nmap_gui/rating.py`: implements the scoring logic from the spec
-- `src/nmap_gui/exporters.py`: CSV / JSON helpers
+## Development Guide
+The repo standardizes on uv + Poe for reproducible environments.
 
-The project intentionally keeps dependencies minimal to stay OSS-friendly and portable.
+- **Environment setup:** `uv venv && source .venv/bin/activate`, then `uv pip install -r requirements-dev.txt`.
+- **Tooling:** `poe lint` (backs `ruff check src tests`), `poe test` (runs `uv run pytest --spec`).
+- **Optional helpers:** `uv tool install poethepoet && uv tool update-shell` to expose the `poe` shim globally.
+- **Safe-script fixtures & XML parsing tests** already live in `tests/`; add coverage whenever rating or scan behavior changes.
 
-## Development
-The project standardizes on the [uv](https://docs.astral.sh/uv/) toolchain for fast, reproducible environments (Poe tasks call `uv run` internally).
+### CI & Release Automation
+- **CI workflow (`ci.yml`):** runs lint + pytest on pushes/PRs targeting `main`.
+- **Release Builds workflow (`pyinstaller.yml`):** produces Windows artifacts on every push to `main`, and both Windows/macOS packages plus changelog PRs for annotated tags or manual dispatches.
+- **Changelog generation:** `git-cliff` is invoked automatically during tag builds; avoid hand-editing `CHANGELOG.md` outside that flow.
 
-1. Install uv (see official docs for platform instructions)
-   - If you want the `poe` command available globally, run `uv tool install poethepoet` followed by `uv tool update-shell` so it is added to your PATH.
-2. Create and activate a virtual environment:
-   ```bash
-   uv venv
-   source .venv/bin/activate      # Windows: .venv\Scripts\activate
-   ```
-3. Install dev dependencies (includes pytest-spec and poethepoet):
-   ```bash
-   uv pip install -r requirements-dev.txt
-   ```
-4. Run the pytest-spec suite via Poe (automatically executes `uv run pytest --spec`):
-  ```bash
-  poe test
-  ```
-  (Poe shells out to `uv run pytest --spec` per `pyproject.toml`.)
-
-### Optional CLI helpers for AI/Desktop automation
-If you frequently drive AI agents or non-interactive shells, installing a few lightweight CLI tools can drastically cut down on `curl` + `grep` loops:
-
-- `lynx` or `w3m` – dump HTML pages as plain text so you can `rg` through documentation without a browser.
-- `htmlq` or `pup` – CSS-selector extractors; perfect for grabbing specific DOM nodes from fetched HTML.
-- `jq` – indispensable for slicing JSON APIs or GitHub responses.
-- `ddgr` (DuckDuckGo CLI) – run web searches directly from the terminal and open results without context switching.
-- `gh` – GitHub’s official CLI for searching issues/PRs and opening them in the browser with one command.
-
-Keeping these in your toolbox makes “ask the web → gather context → continue coding” loops much faster when working purely from the terminal.
-
-## Continuous Integration
-- GitHub Actions now bundles the app with PyInstaller.
-- Every push to `main` builds the Windows binary so merge commits stay green.
-- Pushing a Git tag (for example `v1.0.0`) triggers both Windows and macOS builds. Each job uploads its PyInstaller output as an artifact you can attach to a GitHub Release.
-- Tag pushes also trigger the **Release Changelog** workflow, which regenerates `CHANGELOG.md` with git-cliff and opens an automated PR.
-
-## Release & Changelog Workflow
-1. Make sure `main` is green and create an annotated tag such as `git tag -a 0.2.0 -m "Release 0.2.0"`.
-2. `git push origin 0.2.0` (or `v0.2.0`) to kick off the packaging and changelog workflows.
-3. Wait for the **Release Changelog** workflow to finish. It runs `git-cliff` with `cliff.toml`, updates `CHANGELOG.md`, and opens a PR named `docs: update changelog for <tag>`.
-4. Review the autogenerated PR (diff should only touch `CHANGELOG.md`) and merge it once satisfied. The merged PR ensures `main` always has a fresh changelog entry for the released tag.
-
-## Platform Recommendations
-
-- **Windows (recommended):** Full ICMP/SYN/OS coverage and PyInstaller builds that can run every phase without additional setup.
-- **macOS:** Launching the GUI via Finder/Dock runs as a normal user, so raw socket features are not available. The app automatically downgrades to TCP ping and TCP connect scans and skips OS fingerprinting. Run `sudo python -m nmap_gui.main --debug` (or `sudo /Applications/RogueFinder.app/Contents/MacOS/RogueFinder`) if you need full fidelity, or consider scanning from Windows for the best experience.
-- **Linux:** Behaves like Windows when executed with sufficient privileges; otherwise it inherits the same TCP-only limitations.
-
-## Platform Notes
-- **Windows:** First launch of the unsigned binary may trigger SmartScreen. Click **More info** → **Run anyway** if you trust the build.
-- **macOS:** Release binaries target Apple Silicon (arm64). Intel Macs should run the app from source (`python -m nmap_gui.main`). Gatekeeper tags downloaded binaries with the `com.apple.quarantine` attribute; run `xattr -dr com.apple.quarantine /path/to/rogue-finder` before first launch. When running the GUI without `sudo`, ICMP (`-sn -PE`), SYN (`-sS`), and OS (`-O`) phases degrade to TCP ping/connect scans and OS detection is skipped entirely.
-- **macOS / Linux:** The OS fingerprint phase (`-O`) requires root privileges. Restart the app from Terminal with `sudo python3 -m nmap_gui.main --debug` (or `sudo /path/to/rogue-finder` for the packaged binary) when you need OS detection, or rely on the TCP-only fallback that the GUI now applies automatically when it detects insufficient privileges.
+## Support & Feedback
+- File issues or feature requests via GitHub if you are using official releases.
+- Internal deployments should surface questions (logs, error codes, exports) to the security tooling team so regressions can be reproduced quickly.
+- Need deeper operational guidance? Start with the user manuals, then escalate with `--debug` logs or exported scan JSON for context.

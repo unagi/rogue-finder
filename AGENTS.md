@@ -15,7 +15,7 @@
 - Export buttons call `exporters.export_csv/json` to produce UTF-8 CSV/JSON files. Score breakdowns get JSON-dumped so analysts can trace how a score was formed.
 
 ## Rating System Essentials
-- Rules mirror `nmap_gui_system_spec.md`.
+- Rules mirror the inline summary in README (“Rating Model Overview”) and the constants defined in `rating.py`.
 - `rating.apply_rating` assigns:
   - +2 if ICMP alive.
   - Port weights: 21/445/3389/5985 etc. mostly +2, DB & dev ports +1, see `PORT_WEIGHTS`.
@@ -50,6 +50,6 @@
 
 ## How To Extend Safely
 - Add new scan phases by extending `ScanMode`, making sure cancellation is respected between phases and rating inputs remain deterministic.
-- Rating tweaks should update both `rating.py` and `nmap_gui_system_spec.md`, plus add/adjust pytest expectations so `poe test` guards regressions.
+- Rating tweaks should update `rating.py` (plus README’s “Rating Model Overview”) and add/adjust pytest expectations so `poe test` guards regressions.
 - Any UI addition should funnel through `MainWindow` and communicate with `ScanManager` via Qt signals to avoid blocking the GUI thread.
 - Before shipping binaries, verify local scans with live or fixture XML to avoid flapping combo scores.
