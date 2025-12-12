@@ -76,6 +76,7 @@ class ResultGrid(QObject):
         self._sort_order = Qt.AscendingOrder
         self._progress_bar: QProgressBar | None = None
         self._build_widget()
+        self._show_idle_progress()
 
     def widget(self) -> QWidget:
         return self._widget
@@ -114,7 +115,7 @@ class ResultGrid(QObject):
         self._table.setRowCount(0)
         self._sync_select_all_checkboxes()
         self._update_select_all_enabled()
-        self.finish_progress()
+        self._show_idle_progress()
         if emit_signal:
             self.selectionChanged.emit()
 
@@ -185,21 +186,34 @@ class ResultGrid(QObject):
     def reset_progress(self, total: int) -> None:
         if self._progress_bar is None:
             return
-        self._progress_bar.setMaximum(max(total, 1))
+        maximum = max(total, 1)
+        self._progress_bar.setEnabled(True)
+        self._progress_bar.setMinimum(0)
+        self._progress_bar.setMaximum(maximum)
         self._progress_bar.setValue(0)
         self._progress_bar.setVisible(True)
 
     def set_progress(self, done: int, total: int) -> None:
         if self._progress_bar is None:
             return
-        self._progress_bar.setMaximum(max(total, 1))
-        self._progress_bar.setValue(max(0, min(done, total)))
+        maximum = max(total, 1)
+        if self._progress_bar.maximum() != maximum:
+            self._progress_bar.setMaximum(maximum)
+        value = max(0, min(done, total))
+        self._progress_bar.setValue(value)
+        self._progress_bar.setEnabled(True)
         self._progress_bar.setVisible(True)
 
     def finish_progress(self) -> None:
         if self._progress_bar is None:
             return
-        self._progress_bar.setVisible(False)
+        maximum = self._progress_bar.maximum()
+        if maximum <= 0:
+            maximum = 1
+            self._progress_bar.setMaximum(maximum)
+        self._progress_bar.setValue(maximum)
+        self._progress_bar.setEnabled(False)
+        self._progress_bar.setVisible(True)
 
     def _build_widget(self) -> None:
         layout = QVBoxLayout(self._widget)
@@ -270,9 +284,18 @@ class ResultGrid(QObject):
 
     def _create_progress_bar(self) -> QWidget:
         self._progress_bar = QProgressBar()
-        self._progress_bar.setVisible(False)
+        self._progress_bar.setVisible(True)
         self._progress_bar.setTextVisible(False)
         return self._progress_bar
+
+    def _show_idle_progress(self) -> None:
+        if self._progress_bar is None:
+            return
+        self._progress_bar.setEnabled(False)
+        self._progress_bar.setMinimum(0)
+        self._progress_bar.setMaximum(1)
+        self._progress_bar.setValue(0)
+        self._progress_bar.setVisible(True)
 
     def _configure_column_sizes(self, header: QHeaderView) -> None:
         stretch_columns = [
