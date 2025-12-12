@@ -23,6 +23,7 @@ class ScanControlsPanel(QGroupBox):
     stop_requested = Signal()
     clear_requested = Signal()
     log_requested = Signal()
+    config_editor_requested = Signal()
     targets_changed = Signal()
 
     def __init__(self, translator: Translator, parent=None):
@@ -50,17 +51,21 @@ class ScanControlsPanel(QGroupBox):
         self._stop_button = QPushButton(self._t("stop"))
         self._clear_button = QPushButton(self._t("clear_results_button"))
         self._log_button = QPushButton(self._t("open_log_button"))
+        self._config_button = QPushButton(self._t("config_editor_button"))
         self._start_button.clicked.connect(self.start_requested)
         self._stop_button.clicked.connect(self.stop_requested)
         self._clear_button.clicked.connect(self.clear_requested)
         self._log_button.clicked.connect(self.log_requested)
+        self._config_button.clicked.connect(self.config_editor_requested)
 
         grid.addWidget(self._start_button, 2, 0)
         grid.addWidget(self._stop_button, 2, 1)
         grid.addWidget(self._clear_button, 2, 2)
         grid.addWidget(self._log_button, 2, 3)
+        grid.addWidget(self._config_button, 2, 4)
 
         self._log_button.setEnabled(False)
+        self._config_button.setEnabled(True)
 
     def event(self, event):  # type: ignore[override]
         if event.type() in (QEvent.FontChange, QEvent.ApplicationFontChange, QEvent.LayoutRequest):

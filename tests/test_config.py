@@ -54,3 +54,19 @@ def test_reset_settings_cache_allows_reload(tmp_path, monkeypatch):
     config.reset_settings_cache()
     loaded_second = config.get_settings()
     assert loaded_first.raw["version"] != loaded_second.raw["version"]
+
+
+def test_merge_with_defaults_adds_missing_values():
+    merged = config.merge_with_defaults({"scan": {"default_timeout_seconds": USER_TIMEOUT_OVERRIDE}})
+
+    assert merged["scan"]["default_timeout_seconds"] == USER_TIMEOUT_OVERRIDE
+    assert merged["scan"]["port_scan_list"]  # default injected
+
+
+def test_write_settings_persists_changes(tmp_path):
+    cfg_path = tmp_path / "rogue-finder.config.yaml"
+    payload = config.merge_with_defaults({"scan": {"default_timeout_seconds": USER_TIMEOUT_OVERRIDE}})
+
+    assert config.write_settings(payload, cfg_path)
+    data = yaml.safe_load(cfg_path.read_text())
+    assert data["scan"]["default_timeout_seconds"] == USER_TIMEOUT_OVERRIDE

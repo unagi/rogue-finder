@@ -266,6 +266,9 @@ class ScanManager(QObject):
             self._thread.deleteLater()
         self._thread = None
 
+    def update_settings(self, settings: AppSettings) -> None:
+        self._settings = settings
+
 
 class SafeScriptWorker(QObject):
     progress = Signal(int, int)
@@ -355,3 +358,6 @@ class SafeScriptManager(QObject):
         if self._thread:
             self._thread.deleteLater()
         self._thread = None
+
+    def update_settings(self, settings: AppSettings) -> None:
+        self._settings = settings

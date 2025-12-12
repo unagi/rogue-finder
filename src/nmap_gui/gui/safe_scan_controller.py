@@ -73,6 +73,11 @@ class SafeScanController:
     def stop(self) -> None:
         self._manager.stop()
 
+    def update_settings(self, settings: AppSettings) -> None:
+        self._settings = settings
+        self._parallel = max(1, self._settings.safe_scan.max_parallel)
+        self._manager.update_settings(settings)
+
     def _record_duration(self, duration: float) -> None:
         if duration <= 0:
             return
