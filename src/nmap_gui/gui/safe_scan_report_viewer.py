@@ -3,13 +3,13 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QFileDialog,
     QDialog,
+    QFileDialog,
     QHBoxLayout,
     QLabel,
     QMessageBox,
-    QPushButton,
     QPlainTextEdit,
+    QPushButton,
     QVBoxLayout,
 )
 

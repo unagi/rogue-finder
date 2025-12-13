@@ -5,7 +5,6 @@ import yaml
 
 from nmap_gui import config
 
-
 USER_TIMEOUT_OVERRIDE = 123
 
 

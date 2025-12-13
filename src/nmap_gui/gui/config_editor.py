@@ -2,19 +2,19 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 import yaml
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QFont, QTextCharFormat, QSyntaxHighlighter
+from PySide6.QtGui import QColor, QFont, QSyntaxHighlighter, QTextCharFormat
 from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
     QLabel,
     QMessageBox,
-    QPushButton,
     QPlainTextEdit,
+    QPushButton,
     QVBoxLayout,
     QWidget,
 )
@@ -101,7 +101,7 @@ class ConfigEditorDialog(QDialog):
     def reload_from_disk(self) -> None:
         try:
             settings = load_settings(self._path)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             QMessageBox.critical(
                 self,
                 self._t("config_editor_yaml_error_title"),
@@ -145,7 +145,7 @@ class ConfigEditorDialog(QDialog):
         serialized = yaml.safe_dump(merged, sort_keys=False)
         try:
             success = write_settings(merged, self._path)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             QMessageBox.critical(
                 self,
                 self._t("config_editor_save_failed_title"),

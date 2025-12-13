@@ -1,17 +1,17 @@
 """App state load/save helper."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextlib import suppress
-from typing import Callable
 
 from PySide6.QtCore import QByteArray, QTimer
 from PySide6.QtWidgets import QMainWindow, QMessageBox
 
-from .result_grid import ResultGrid
 from ..state_store import AppState, load_state, save_state
 from ..storage_warnings import StorageWarning, consume_storage_warnings
-from .scan_controls import ScanControlsPanel
+from .result_grid import ResultGrid
 from .result_store import ResultStore
+from .scan_controls import ScanControlsPanel
 
 Translator = Callable[[str], str]
 
@@ -40,7 +40,14 @@ class StateController:
         self._app_state = state
         return self._app_state
 
-    def apply(self, *, window: QMainWindow, controls: ScanControlsPanel, result_store: ResultStore, result_grid: ResultGrid) -> None:
+    def apply(
+        self,
+        *,
+        window: QMainWindow,
+        controls: ScanControlsPanel,
+        result_store: ResultStore,
+        result_grid: ResultGrid,
+    ) -> None:
         state = self._app_state
         controls.set_targets_text(state.targets_text)
         if state.window_geometry:
@@ -54,7 +61,14 @@ class StateController:
         )
         result_store.restore_results(state.results)
 
-    def collect(self, *, window: QMainWindow, controls: ScanControlsPanel, result_store: ResultStore, result_grid: ResultGrid) -> AppState:
+    def collect(
+        self,
+        *,
+        window: QMainWindow,
+        controls: ScanControlsPanel,
+        result_store: ResultStore,
+        result_grid: ResultGrid,
+    ) -> AppState:
         return AppState(
             targets_text=controls.targets_text(),
             icmp_enabled=True,
@@ -117,7 +131,10 @@ class StateController:
         continue_button = dialog.addButton(
             self._translator("storage_warning_continue"), QMessageBox.ButtonRole.AcceptRole
         )
-        dialog.addButton(self._translator("storage_warning_exit"), QMessageBox.ButtonRole.RejectRole)
+        dialog.addButton(
+            self._translator("storage_warning_exit"),
+            QMessageBox.ButtonRole.RejectRole,
+        )
         dialog.setDefaultButton(continue_button)
         dialog.exec()
         return dialog.clickedButton() is continue_button

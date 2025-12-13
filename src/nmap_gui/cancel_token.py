@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from contextlib import suppress
 from multiprocessing.connection import Connection
-from typing import Tuple
 
 
 class PipeCancelToken:
@@ -24,7 +23,7 @@ class PipeCancelToken:
             self._connection.close()
 
 
-def create_pipe_cancel_token(context) -> Tuple[Connection, PipeCancelToken]:
+def create_pipe_cancel_token(context) -> tuple[Connection, PipeCancelToken]:
     """Return (writer_conn, cancel_token) pair for the provided context."""
 
     rx, tx = context.Pipe(duplex=False)

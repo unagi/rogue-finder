@@ -4,7 +4,7 @@ from __future__ import annotations
 import pickle
 from pathlib import Path
 
-from nmap_gui.state_store import AppState, CURRENT_STATE_VERSION, load_state, save_state
+from nmap_gui.state_store import CURRENT_STATE_VERSION, AppState, load_state, save_state
 from nmap_gui.storage_warnings import consume_storage_warnings
 
 

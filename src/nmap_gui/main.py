@@ -7,8 +7,7 @@ import multiprocessing as mp
 import sys
 from pathlib import Path
 
-from PySide6.QtWidgets import QApplication
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 # PyInstaller executes main.py as a top-level script. When that happens
 # ``__package__`` is empty and the parent directory (project/src root) is not on

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List
 
 
 @dataclass(frozen=True)
@@ -16,7 +15,7 @@ class StorageWarning:
     detail: str
 
 
-_WARNINGS: List[StorageWarning] = []
+_WARNINGS: list[StorageWarning] = []
 
 
 def record_storage_warning(scope: str, action: str, path: Path, detail: str) -> None:
@@ -25,7 +24,7 @@ def record_storage_warning(scope: str, action: str, path: Path, detail: str) -> 
     _WARNINGS.append(StorageWarning(scope=scope, action=action, path=path, detail=detail))
 
 
-def consume_storage_warnings() -> List[StorageWarning]:
+def consume_storage_warnings() -> list[StorageWarning]:
     """Return and clear any pending storage warnings."""
 
     warnings = list(_WARNINGS)

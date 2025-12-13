@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import time
-from typing import Callable, List, Sequence
+from collections.abc import Callable, Sequence
 
 from PySide6.QtWidgets import QMessageBox, QWidget
 
@@ -53,7 +53,7 @@ class SafeScanController:
         self._manager.finished.connect(self._on_finished)
 
         self._active = False
-        self._history: List[float] = []
+        self._history: list[float] = []
         self._elapsed_start: float | None = None
         self._batch_total = 0
         self._completed = 0
@@ -150,7 +150,7 @@ class SafeScanController:
         if not self._is_scan_active():
             if duration is not None and duration > 0:
                 finished_message = self._translator("safe_scan_progress_complete_multi").format(
-                    seconds=int(round(duration)),
+                    seconds=round(duration),
                     total=max(completed_total, 1),
                 )
             else:
@@ -161,7 +161,7 @@ class SafeScanController:
     def _build_eta_message(self, remaining: float) -> str:
         total = max(self._batch_total, 1)
         done = min(self._completed, total)
-        eta = max(int(round(remaining)), 0)
+        eta = max(round(remaining), 0)
         mins, secs = divmod(eta, 60)
         hours, mins = divmod(mins, 60)
         eta_text = f"{hours:d}:{mins:02d}:{secs:02d}" if hours else f"{mins:02d}:{secs:02d}"

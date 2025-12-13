@@ -1,10 +1,9 @@
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor
-
 from types import SimpleNamespace
 
-from nmap_gui.cancel_token import PipeCancelToken
 from nmap_gui import scan_manager
+from nmap_gui.cancel_token import PipeCancelToken
 
 
 def _worker(token: PipeCancelToken):

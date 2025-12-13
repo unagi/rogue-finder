@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import copy
-from typing import Dict, List, Sequence
+from collections.abc import Sequence
 
 from ..models import HostScanResult, SafeScanReport
 from .result_grid import ResultGrid
@@ -15,8 +15,8 @@ class ResultStore:
     def __init__(self, result_grid: ResultGrid, summary_panel: SummaryPanel) -> None:
         self._result_grid = result_grid
         self._summary_panel = summary_panel
-        self._results: List[HostScanResult] = []
-        self._result_lookup: Dict[str, HostScanResult] = {}
+        self._results: list[HostScanResult] = []
+        self._result_lookup: dict[str, HostScanResult] = {}
 
     def reset(self, *, emit_selection_changed: bool = True) -> None:
         self._results.clear()
@@ -73,10 +73,10 @@ class ResultStore:
     def has_results(self) -> bool:
         return bool(self._results)
 
-    def results(self) -> List[HostScanResult]:
+    def results(self) -> list[HostScanResult]:
         return self._results
 
-    def snapshot_results(self) -> List[HostScanResult]:
+    def snapshot_results(self) -> list[HostScanResult]:
         return copy.deepcopy(self._results)
 
     def restore_results(self, stored: Sequence[HostScanResult]) -> None:
@@ -99,5 +99,5 @@ class ResultStore:
             status=status,
         )
 
-    def export_payload(self) -> List[HostScanResult]:
+    def export_payload(self) -> list[HostScanResult]:
         return self._results

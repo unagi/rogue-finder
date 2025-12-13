@@ -29,10 +29,10 @@ env.PYINSTALLER_CACHE_DIR = "{project_root}/.pyinstaller"
 
 [tool.ruff]
 target-version = "py311"
-line-length = 100
+line-length = 130
 
 [tool.ruff.lint]
-extend-select = ["B", "C90", "SIM", "PLR"]
+extend-select = ["B", "C90", "E", "F", "I", "PLR", "RUF", "SIM", "UP", "W"]
 
 [tool.ruff.lint.per-file-ignores]
 "src/nmap_gui/gui/safe_scan_controller.py" = ["PLR0913"]

@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QLabel,
     QMessageBox,
-    QDialog,
-    QDialogButtonBox,
     QPlainTextEdit,
     QVBoxLayout,
 )

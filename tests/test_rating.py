@@ -5,7 +5,6 @@ from nmap_gui.config import DEFAULT_SETTINGS
 from nmap_gui.models import HostScanResult
 from nmap_gui.rating import apply_rating
 
-
 _RATING_DEFAULTS = DEFAULT_SETTINGS["rating"]
 ICMP_POINTS = _RATING_DEFAULTS["icmp_points"]
 MYSQL_PORT_WEIGHT = _RATING_DEFAULTS["port_weights"][3306]

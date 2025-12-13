@@ -1,8 +1,8 @@
 """Helpers for estimating remaining wall-clock time for parallel jobs."""
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Dict, Iterable, Optional
 
 
 def _ceil_div(value: int, divisor: int) -> int:
@@ -25,7 +25,7 @@ class EstimateRange:
     estimate_sec: float
     lower_sec: float
     upper_sec: float
-    meta: Dict[str, float | int | None]
+    meta: dict[str, float | int | None]
 
 
 @dataclass
@@ -62,13 +62,18 @@ class ParallelJobTimeEstimator:
         self._total_tasks = 0
         self._completed_total = 0
         self._window_completed = 0
-        self._throughput_ewma: Optional[float] = None
+        self._throughput_ewma: float | None = None
 
     def estimate_before_start(self, total_tasks: int) -> EstimateRange:
         total = max(0, total_tasks)
         self._total_tasks = total
         if total <= 0:
-            return EstimateRange(0.0, 0.0, 0.0, {"mode": "pre", "mu": 0.0, "beta": self._config.beta})
+            return EstimateRange(
+                0.0,
+                0.0,
+                0.0,
+                {"mode": "pre", "mu": 0.0, "beta": self._config.beta},
+            )
         min_eff, max_eff = self._effective_bounds()
         batches = _ceil_div(total, self._parallelism)
         lower = min_eff * batches
@@ -101,7 +106,11 @@ class ParallelJobTimeEstimator:
         if self._observed_max is None or duration_seconds > self._observed_max:
             self._observed_max = duration_seconds
 
-    def update_progress(self, remaining_tasks: int, window_sec: float | None = None) -> EstimateRange:
+    def update_progress(
+        self,
+        remaining_tasks: int,
+        window_sec: float | None = None,
+    ) -> EstimateRange:
         remaining = max(0, remaining_tasks)
         if remaining <= 0:
             return EstimateRange(0.0, 0.0, 0.0, {"mode": "running", "remaining_tasks": 0})
@@ -113,7 +122,7 @@ class ParallelJobTimeEstimator:
         done = self._window_completed
         self._window_completed = 0
         inst_throughput = done / window if window > 0 else 0.0
-        meta: Dict[str, float | int | None] = {
+        meta: dict[str, float | int | None] = {
             "mode": "running",
             "throughput_inst": inst_throughput,
             "throughput_ewma": self._throughput_ewma,
@@ -127,7 +136,9 @@ class ParallelJobTimeEstimator:
                 self._throughput_ewma = inst_throughput
             else:
                 alpha = self._config.ewma_alpha
-                self._throughput_ewma = alpha * inst_throughput + (1 - alpha) * self._throughput_ewma
+                self._throughput_ewma = (
+                    alpha * inst_throughput + (1 - alpha) * self._throughput_ewma
+                )
             meta["throughput_ewma"] = self._throughput_ewma
         elif done == 0:
             if self._config.fallback_on_zero_done == "use_upper":
@@ -181,8 +192,8 @@ class WorkBasedEstimator:
         self._alpha = max(0.0, min(alpha, 1.0))
         self._epsilon = max(epsilon, 1e-12)
         self._initial_rate = max(initial_rate, self._epsilon)
-        self._rate_ewma: Optional[float] = None
-        self._last_ts: Optional[float] = None
+        self._rate_ewma: float | None = None
+        self._last_ts: float | None = None
 
     def estimate_before_start(self, tasks: Iterable[TaskSpec]) -> EstimateRange:
         task_list = list(tasks)
@@ -216,7 +227,7 @@ class WorkBasedEstimator:
         remaining_list = list(remaining)
         remaining_work = sum(max(task.size, 0.0) for task in remaining_list)
         done_work = sum(max(task.size, 0.0) for task in completed)
-        meta: Dict[str, float | int | None] = {
+        meta: dict[str, float | int | None] = {
             "mode": "running",
             "done_work": done_work,
             "remaining_work": remaining_work,
