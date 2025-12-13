@@ -35,7 +35,7 @@ _PRIVILEGED_SCAN_PATTERNS = (
     "requires privileged access",
 )
 
-if os.name == "nt":
+if os.name == "nt":  # pragma: no cover - Windows-only initialization
     _WINDOWS_STARTUPINFO = subprocess.STARTUPINFO()
     _WINDOWS_STARTUPINFO.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0)
     _WINDOWS_CREATION_FLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0)

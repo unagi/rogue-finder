@@ -12,7 +12,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 # PyInstaller executes main.py as a top-level script. When that happens
 # ``__package__`` is empty and the parent directory (project/src root) is not on
 # ``sys.path``. Add it so the ``nmap_gui`` package can be imported normally.
-if __package__ in (None, ""):
+if __package__ in (None, ""):  # pragma: no cover - script-only path adjustments
     package_dir = Path(__file__).resolve().parent
     sys.path.insert(0, str(package_dir.parent))
 
@@ -73,5 +73,5 @@ def main(argv: list[str] | None = None) -> int:
     return app.exec()
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover - CLI entry hand-off
     sys.exit(main())

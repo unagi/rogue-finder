@@ -3,6 +3,8 @@ import time
 from concurrent.futures import Future, ProcessPoolExecutor
 from types import SimpleNamespace
 
+import pytest
+
 from nmap_gui import scan_manager
 from nmap_gui.cancel_token import PipeCancelToken
 from nmap_gui.error_codes import ERROR_SCAN_CRASHED, ERROR_WORKER_POOL_FAILED
@@ -287,3 +289,326 @@ def test_send_log_event_swallows_broken_pipe():
             raise BrokenPipeError("closed")
 
     scan_manager._send_log_event(DummyConn(), "ignored")
+
+
+def test_send_log_event_returns_when_connection_missing():
+    # Should safely return even when no pipe connection is provided.
+    scan_manager._send_log_event(None, "ignored")
+
+
+def test_scan_worker_start_handles_empty_target_list():
+    config = ScanConfig(targets=[], scan_modes={ScanMode.ICMP})
+    worker = scan_manager.ScanWorker(config)
+    finished: list[str] = []
+    worker.finished = SimpleNamespace(emit=lambda: finished.append("finished"))
+    worker._close_cancel_token = lambda: finished.append("token_closed")
+
+    worker.start()
+
+    assert finished == ["finished", "token_closed"]
+
+
+def test_scan_worker_start_runs_executor_path(monkeypatch):
+    config = ScanConfig(targets=["alpha"], scan_modes={ScanMode.ICMP})
+    worker = scan_manager.ScanWorker(config)
+    events: list[str] = []
+    worker.finished = SimpleNamespace(emit=lambda: events.append("finished"))
+    worker._close_cancel_token = lambda: events.append("token_closed")
+    worker._close_log_receivers = lambda: events.append("logs_closed")
+    worker._prepare_targets = lambda: ["alpha"]
+
+    class DummyExecutor:
+        def __init__(self, **kwargs):
+            events.append(f"executor_init:{kwargs['max_workers']}")
+
+        def __enter__(self):
+            events.append("executor_enter")
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            events.append("executor_exit")
+            return False
+
+    def fake_executor_config(total):
+        events.append(f"config_total:{total}")
+        return DummyExecutor, {"max_workers": 1}
+
+    def fake_submit_targets(executor, targets):
+        events.append(f"targets:{targets}")
+        return ({object(): "alpha"}, {})
+
+    def fake_consume(futures, log_channels, total):
+        events.append(f"consume:{total}")
+
+    worker._executor_config = fake_executor_config
+    worker._submit_targets = fake_submit_targets
+    worker._consume_futures = fake_consume
+
+    worker.start()
+
+    assert events.count("finished") == 1
+    assert events[-2:] == ["token_closed", "logs_closed"]
+
+
+def test_close_cancel_token_closes_resources():
+    config = ScanConfig(targets=["a"], scan_modes={ScanMode.ICMP})
+    worker = scan_manager.ScanWorker(config)
+
+    class DummyConn:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    tx = DummyConn()
+    token = DummyConn()
+    worker._cancel_tx = tx
+    worker._cancel_token = token
+
+    worker._close_cancel_token()
+
+    assert tx.closed and token.closed
+    assert worker._cancel_tx is None and worker._cancel_token is None
+
+
+def test_submit_targets_registers_log_channels(monkeypatch):
+    config = ScanConfig(targets=["a"], scan_modes={ScanMode.ICMP})
+    worker = scan_manager.ScanWorker(config)
+
+    class DummyConn:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    def fake_create_channel():
+        return DummyConn()
+
+    worker._create_log_channel = fake_create_channel
+
+    class DummyExecutor:
+        def submit(self, func, *args):
+            self.called_with = args
+            return object()
+
+    futures, channels = worker._submit_targets(DummyExecutor(), ["host"])
+
+    assert len(futures) == 1
+    assert len(channels) == 1
+    future = next(iter(futures))
+    assert channels[future] is not None
+
+
+def test_submit_targets_closes_channel_on_submit_error(monkeypatch):
+    config = ScanConfig(targets=["a"], scan_modes={ScanMode.ICMP})
+    worker = scan_manager.ScanWorker(config)
+
+    class DummyConn:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    dummy_conn = DummyConn()
+    worker._create_log_channel = lambda: dummy_conn
+
+    class FailingExecutor:
+        def submit(self, *args, **kwargs):
+            raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError):
+        worker._submit_targets(FailingExecutor(), ["host"])
+    assert dummy_conn.closed is True
+
+
+def test_consume_futures_stops_when_cancelled():
+    worker, emitted, _, _ = _make_worker_spies()
+
+    future = Future()
+    future.set_result("ignored")
+
+    worker._cancelled = lambda: True
+
+    worker._consume_futures({future: "target"}, {}, total=1)
+
+    assert emitted == []
+
+
+def _fake_signal():
+    class SignalStub:
+        def __init__(self):
+            self.handlers = []
+
+        def connect(self, handler):
+            self.handlers.append(handler)
+
+        def emit(self, *args, **kwargs):
+            for handler in list(self.handlers):
+                handler(*args, **kwargs)
+
+    return SignalStub()
+
+
+class _TrackingThread:
+    def __init__(self):
+        self.started = _fake_signal()
+        self.finished = _fake_signal()
+        self.running = False
+        self.deleted = False
+
+    def start(self):
+        self.running = True
+        for handler in list(self.started.handlers):
+            handler()
+
+    def isRunning(self):
+        return self.running
+
+    def quit(self):
+        self.running = False
+
+    def wait(self, timeout):
+        for handler in list(self.finished.handlers):
+            handler()
+
+    def deleteLater(self):
+        self.deleted = True
+
+
+class _ScanWorkerStub:
+    def __init__(self, config, settings):
+        self.config = config
+        self.settings = settings
+        self.progress = _fake_signal()
+        self.result_ready = _fake_signal()
+        self.error = _fake_signal()
+        self.log_ready = _fake_signal()
+        self.finished = _fake_signal()
+        self.thread = None
+        self.stopped = False
+
+    def moveToThread(self, thread):
+        self.thread = thread
+
+    def start(self):
+        pass
+
+    def request_stop(self):
+        self.stopped = True
+
+
+class _SafeScriptWorkerStub:
+    def __init__(self, targets, settings):
+        self.targets = targets
+        self.settings = settings
+        self.start_called = False
+        self.result_ready = _fake_signal()
+        self.error = _fake_signal()
+        self.progress = _fake_signal()
+        self.finished = _fake_signal()
+        self.thread = None
+
+    def moveToThread(self, thread):
+        self.thread = thread
+
+    def start(self):
+        self.start_called = True
+
+
+def test_scan_manager_start_and_stop(monkeypatch):
+    monkeypatch.setattr(scan_manager, "QThread", _TrackingThread)
+    created_workers: list[_ScanWorkerStub] = []
+
+    def fake_worker(config, settings):
+        worker = _ScanWorkerStub(config, settings)
+        created_workers.append(worker)
+        return worker
+
+    monkeypatch.setattr(scan_manager, "ScanWorker", fake_worker)
+
+    manager = scan_manager.ScanManager(settings=SimpleNamespace())
+    manager.started = _fake_signal()
+    started_counts: list[int] = []
+    manager.started.connect(lambda count: started_counts.append(count))
+
+    config = ScanConfig(targets=["x", "y"], scan_modes={ScanMode.ICMP})
+    manager.start(config)
+
+    assert started_counts == [2]
+    assert isinstance(manager._thread, _TrackingThread)
+    assert created_workers and isinstance(created_workers[0], _ScanWorkerStub)
+
+    manager.stop()
+
+    assert manager._worker is None
+    assert manager._thread is None
+
+
+def test_safe_script_manager_start_respects_unique_targets(monkeypatch):
+    monkeypatch.setattr(scan_manager, "QThread", _TrackingThread)
+    created_workers: list[_SafeScriptWorkerStub] = []
+
+    def fake_worker(targets, settings):
+        worker = _SafeScriptWorkerStub(targets, settings)
+        created_workers.append(worker)
+        return worker
+
+    monkeypatch.setattr(scan_manager, "SafeScriptWorker", fake_worker)
+
+    manager = scan_manager.SafeScriptManager(settings=SimpleNamespace())
+    manager.started = _fake_signal()
+    started_counts: list[int] = []
+    manager.started.connect(lambda count: started_counts.append(count))
+
+    manager.start(["a", "a", "b"])
+
+    assert started_counts == [2]
+    assert isinstance(manager._thread, _TrackingThread)
+    assert created_workers and created_workers[0].start_called is True
+
+    manager.stop()
+    assert manager._thread is None
+
+
+def test_safe_script_manager_start_ignores_running_instance(monkeypatch):
+    class FakeThread:
+        def __init__(self):
+            self.started = _fake_signal()
+            self.finished = _fake_signal()
+            self.running = True
+
+        def start(self):
+            pass
+
+        def isRunning(self):
+            return self.running
+
+        def quit(self):
+            self.running = False
+
+        def wait(self, timeout):
+            pass
+
+        def deleteLater(self):
+            pass
+
+    monkeypatch.setattr(scan_manager, "QThread", lambda: FakeThread())
+    monkeypatch.setattr(scan_manager, "SafeScriptWorker", lambda targets, settings: SimpleNamespace(
+        moveToThread=lambda thread: None,
+        result_ready=_fake_signal(),
+        error=_fake_signal(),
+        progress=_fake_signal(),
+        finished=_fake_signal(),
+        start=lambda: None,
+    ))
+
+    manager = scan_manager.SafeScriptManager(settings=SimpleNamespace())
+    manager._thread = FakeThread()
+    manager._worker = SimpleNamespace()
+
+    manager.start(["a"])
+
+    assert isinstance(manager._worker, SimpleNamespace)

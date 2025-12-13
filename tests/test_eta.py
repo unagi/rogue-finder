@@ -1,6 +1,12 @@
 import pytest
 
-from nmap_gui.eta import EstimatorConfig, ParallelJobTimeEstimator, TaskSpec, WorkBasedEstimator
+from nmap_gui.eta import (
+    EstimatorConfig,
+    ParallelJobTimeEstimator,
+    TaskSpec,
+    WorkBasedEstimator,
+    _ceil_div,
+)
 
 
 def test_estimate_before_start_zero_tasks():
@@ -115,3 +121,117 @@ def test_work_based_update_refines_rate():
     )
     assert estimate.estimate_sec <= estimate.upper_sec
     assert estimate.lower_sec >= 0.0
+
+
+def test_ceil_div_handles_non_positive_values():
+    assert _ceil_div(-5, 3) == 0
+    assert _ceil_div(10, 0) == 0
+
+
+def test_parallel_estimator_respects_observed_bounds():
+    estimator = ParallelJobTimeEstimator(
+        parallelism=2,
+        min_per_task=1.0,
+        max_per_task=10.0,
+        observed_bounds=(2.0, 4.0),
+    )
+    estimate = estimator.estimate_before_start(4)
+    assert estimate.lower_sec == pytest.approx(4.0)
+    assert estimate.upper_sec == pytest.approx(8.0)
+
+
+def test_register_completion_ignores_non_positive_duration():
+    estimator = ParallelJobTimeEstimator(parallelism=1, min_per_task=2.0, max_per_task=10.0)
+    estimator.register_completion(-1.0)
+    estimator.register_completion(0.0)
+    estimator.register_completion(None)
+    estimator.register_completion(5.0)
+    estimate = estimator.estimate_before_start(2)
+    assert estimate.lower_sec == pytest.approx(10.0)
+    assert estimate.upper_sec == pytest.approx(10.0)
+
+
+def test_update_progress_without_history_returns_upper_bound():
+    estimator = ParallelJobTimeEstimator(parallelism=1, min_per_task=2.0, max_per_task=4.0)
+    estimator.estimate_before_start(2)
+    estimate = estimator.update_progress(remaining_tasks=2, window_sec=5.0)
+    assert estimate.estimate_sec == estimate.upper_sec
+
+
+def test_update_progress_updates_existing_ewma():
+    estimator = ParallelJobTimeEstimator(
+        parallelism=1,
+        min_per_task=2.0,
+        max_per_task=6.0,
+        config=EstimatorConfig(window_sec=5.0, ewma_alpha=0.25),
+    )
+    estimator.estimate_before_start(3)
+    estimator.register_completion(4.0)
+    estimator.update_progress(remaining_tasks=2, window_sec=4.0)
+    estimator.register_completion(4.0)
+    estimate = estimator.update_progress(remaining_tasks=1, window_sec=4.0)
+    assert estimate.meta["throughput_ewma"] is not None
+
+
+def test_work_based_estimate_handles_zero_work():
+    estimator = WorkBasedEstimator(worker_count=1)
+    estimate = estimator.estimate_before_start([])
+    assert estimate.estimate_sec == 0.0
+    assert estimate.meta["total_work"] == 0.0
+
+
+def test_work_based_update_returns_zero_when_done():
+    estimator = WorkBasedEstimator(worker_count=1)
+    estimator.estimate_before_start([TaskSpec(task_id="a", size=1.0)])
+    estimate = estimator.update(
+        now_ts=0.0,
+        completed=[TaskSpec(task_id="a", size=1.0)],
+        remaining=[],
+    )
+    assert estimate.estimate_sec == 0.0
+
+
+def test_work_based_update_sets_inst_rate_and_ewma():
+    estimator = WorkBasedEstimator(worker_count=1, alpha=0.5)
+    tasks = [TaskSpec(task_id="a", size=2.0), TaskSpec(task_id="b", size=2.0)]
+    estimator.estimate_before_start(tasks)
+    estimator.update(now_ts=0.0, completed=[], remaining=tasks)
+    estimate = estimator.update(
+        now_ts=2.0,
+        completed=[TaskSpec(task_id="a", size=2.0)],
+        remaining=[TaskSpec(task_id="b", size=2.0)],
+    )
+    assert estimate.meta["inst_rate"] == pytest.approx(1.0)
+    assert estimate.meta["rate_ewma"] == pytest.approx(1.0)
+
+
+def test_work_based_reset_clears_state():
+    estimator = WorkBasedEstimator(worker_count=1)
+    tasks = [TaskSpec(task_id="a", size=1.0)]
+    estimator.estimate_before_start(tasks)
+    estimator.update(now_ts=1.0, completed=tasks, remaining=[])
+    estimator.reset()
+    estimator.estimate_before_start(tasks)
+    estimate = estimator.update(now_ts=2.0, completed=[], remaining=tasks)
+    assert estimate.meta["rate_ewma"] is None
+
+
+def test_work_based_update_blends_existing_rate():
+    estimator = WorkBasedEstimator(worker_count=1, alpha=0.5)
+    tasks = [
+        TaskSpec(task_id="a", size=2.0),
+        TaskSpec(task_id="b", size=2.0),
+    ]
+    estimator.estimate_before_start(tasks)
+    estimator.update(now_ts=0.0, completed=[], remaining=tasks)
+    estimator.update(
+        now_ts=2.0,
+        completed=[TaskSpec(task_id="a", size=2.0)],
+        remaining=[TaskSpec(task_id="b", size=2.0)],
+    )
+    estimate = estimator.update(
+        now_ts=4.0,
+        completed=[TaskSpec(task_id="b", size=2.0)],
+        remaining=[],
+    )
+    assert estimate.meta["rate_ewma"] == pytest.approx(1.0)
