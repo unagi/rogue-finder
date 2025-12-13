@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Callable, Dict, Iterable, Sequence, Set
 
-from PySide6.QtCore import QObject, Qt, Signal
+import time
+
+from PySide6.QtCore import QObject, Qt, Signal, QTimer
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -12,9 +15,9 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
-    QWidget,
     QHeaderView,
     QProgressBar,
+    QWidget,
 )
 
 from ..i18n import format_error_list
@@ -36,6 +39,23 @@ DEFAULT_PRIORITY_COLORS = {
     "Medium": QColor(255, 240, 210),
     "Low": QColor(210, 235, 255),
 }
+
+
+@dataclass
+class FastProgressState:
+    """Holds progress simulation state for fast discovery."""
+
+    total_work: float = 0.0
+    mode: str | None = None
+    progress_value: int = 0
+    progress_max: int = 1
+    progress_cap: int = 1
+    eta_seconds: float = 0.0
+    eta_started_at: float | None = None
+
+    @property
+    def simulated(self) -> bool:
+        return self.mode == "simulated"
 
 
 class ResultGrid(QObject):
@@ -75,6 +95,10 @@ class ResultGrid(QObject):
         self._sort_column: int | None = None
         self._sort_order = Qt.AscendingOrder
         self._progress_bar: QProgressBar | None = None
+        self._fast_progress_state: FastProgressState | None = None
+        self._fast_progress_timer = QTimer(self._widget)
+        self._fast_progress_timer.setInterval(500)
+        self._fast_progress_timer.timeout.connect(self._on_fast_progress_tick)
         self._build_widget()
         self._show_idle_progress()
 
@@ -218,6 +242,89 @@ class ResultGrid(QObject):
         self._progress_bar.setValue(maximum)
         self._progress_bar.setEnabled(False)
         self._progress_bar.setVisible(True)
+        self._fast_progress_timer.stop()
+
+    # Fast progress helpers -------------------------------------------------
+
+    def configure_fast_progress(self, target_count: int, total_work: float) -> None:
+        state = FastProgressState(total_work=total_work)
+        if target_count == 1 and total_work > 1:
+            state.mode = "simulated"
+            state.progress_max = 1000
+            state.progress_cap = int(state.progress_max * 0.9)
+        else:
+            state.progress_max = max(1, target_count)
+            state.progress_cap = state.progress_max
+        self._fast_progress_state = state
+        self._fast_progress_timer.stop()
+        self.reset_progress(state.progress_max)
+
+    def is_fast_progress_simulated(self) -> bool:
+        return bool(self._fast_progress_state and self._fast_progress_state.simulated)
+
+    def start_fast_progress(self, eta_seconds: float) -> None:
+        state = self._fast_progress_state
+        if state is None:
+            return
+        state.eta_seconds = max(eta_seconds, 0.0)
+        state.eta_started_at = time.monotonic()
+        state.progress_value = 0
+        if not state.simulated:
+            self._fast_progress_timer.stop()
+            return
+        if state.eta_seconds <= 0:
+            self._fast_progress_timer.stop()
+            return
+        self._fast_progress_timer.start()
+
+    def update_fast_progress_eta(self, eta_seconds: float) -> None:
+        state = self._fast_progress_state
+        if state is None:
+            return
+        state.eta_seconds = max(eta_seconds, 0.0)
+        if state.eta_started_at is None:
+            state.eta_started_at = time.monotonic()
+        if state.simulated and state.eta_seconds > 0 and not self._fast_progress_timer.isActive():
+            self._fast_progress_timer.start()
+
+    def handle_fast_progress_update(self, done: int, total: int) -> bool:
+        state = self._fast_progress_state
+        if not state or not state.simulated:
+            return False
+        if done >= total and state.progress_max > 0:
+            self.set_progress(state.progress_max, state.progress_max)
+            self._fast_progress_timer.stop()
+            self._fast_progress_state = None
+        return True
+
+    def complete_fast_progress(self) -> None:
+        state = self._fast_progress_state
+        if state is None:
+            return
+        self.set_progress(state.progress_max, state.progress_max)
+        self._fast_progress_timer.stop()
+        self._fast_progress_state = None
+
+    def reset_fast_progress(self) -> None:
+        self._fast_progress_timer.stop()
+        self._fast_progress_state = None
+
+    def _on_fast_progress_tick(self) -> None:
+        state = self._fast_progress_state
+        if not state or not state.simulated:
+            self._fast_progress_timer.stop()
+            return
+        if state.eta_seconds <= 0 or state.progress_max <= 0:
+            return
+        if state.eta_started_at is None:
+            state.eta_started_at = time.monotonic()
+        elapsed = max(time.monotonic() - state.eta_started_at, 0.0)
+        total = max(state.eta_seconds, 1.0)
+        fraction = min(elapsed / total, 0.9)
+        target_value = min(state.progress_cap, int(state.progress_max * fraction))
+        if target_value > state.progress_value:
+            state.progress_value = target_value
+            self.set_progress(state.progress_value, state.progress_max)
 
     def _build_widget(self) -> None:
         layout = QVBoxLayout(self._widget)
