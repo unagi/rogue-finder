@@ -86,6 +86,7 @@ def test_run_nmap_raises_on_nonzero_exit(monkeypatch):
             return self.returncode
 
         def kill(self):
+            # No-op: tests never send SIGKILL, but method must exist for subprocess API compatibility.
             pass
 
     created = {"count": 0}

@@ -8,6 +8,7 @@ from nmap_gui.cancel_token import PipeCancelToken
 
 def _worker(token: PipeCancelToken):
     while not token.is_set():
+        # Busy-wait until cancellation is signaled; test only verifies token propagation.
         pass
     return True
 
