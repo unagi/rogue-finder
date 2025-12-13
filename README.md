@@ -44,7 +44,7 @@ PySide6 desktop application that orchestrates lightweight Nmap discovery jobs, r
 2. Leave ICMP/Ports/OS phases enabled or toggle as needed.
 3. Click **Start** to queue discovery jobs; **Stop** cancels in-flight work.
 4. Review prioritized results (High/Medium/Low) and export CSV/JSON or run Safe Script diagnostics.
-5. 詳細手順・FAQはユーザーマニュアル（英語/日本語）をご参照ください。
+5. For full instructions and FAQs, see the English/Japanese user manuals.
 
 ## Rating Model Overview
 The rules that previously lived in `nmap_gui_system_spec.md` are summarized here for convenience:
