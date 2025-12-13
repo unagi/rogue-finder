@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import replace
+from typing import cast
 
 from .config import RatingSettings, get_settings
 from .models import HostScanResult
@@ -37,7 +38,8 @@ def apply_rating(
     score += _score_combos(result.open_ports, rating_settings, breakdown)
     priority = _determine_priority(score, rating_settings)
 
-    return replace(result, score=score, priority=priority, score_breakdown=breakdown)
+    updated = replace(result, score=score, priority=priority, score_breakdown=breakdown)
+    return cast(HostScanResult, updated)
 
 
 def _score_icmp(result: HostScanResult, settings: RatingSettings, breakdown: dict[str, int]) -> int:

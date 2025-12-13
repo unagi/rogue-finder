@@ -114,38 +114,15 @@ class ParallelJobTimeEstimator:
         remaining = max(0, remaining_tasks)
         if remaining <= 0:
             return EstimateRange(0.0, 0.0, 0.0, {"mode": "running", "remaining_tasks": 0})
-        min_eff, max_eff = self._effective_bounds()
-        batches = _ceil_div(remaining, self._parallelism)
-        lower = min_eff * batches
-        upper = max_eff * batches
-        window = window_sec if window_sec and window_sec > 0 else self._config.window_sec
-        done = self._window_completed
-        self._window_completed = 0
-        inst_throughput = done / window if window > 0 else 0.0
-        meta: dict[str, float | int | None] = {
-            "mode": "running",
-            "throughput_inst": inst_throughput,
-            "throughput_ewma": self._throughput_ewma,
-            "alpha": self._config.ewma_alpha,
-            "window_sec": window,
-            "done_in_window": done,
-            "remaining_tasks": remaining,
-        }
-        if done > 0 and window > 0:
-            if self._throughput_ewma is None:
-                self._throughput_ewma = inst_throughput
-            else:
-                alpha = self._config.ewma_alpha
-                self._throughput_ewma = (
-                    alpha * inst_throughput + (1 - alpha) * self._throughput_ewma
-                )
-            meta["throughput_ewma"] = self._throughput_ewma
-        elif done == 0:
-            if self._config.fallback_on_zero_done == "use_upper":
-                return EstimateRange(upper, lower, upper, meta)
-            if self._throughput_ewma is None:
-                return EstimateRange(upper, lower, upper, meta)
-        throughput = max(self._throughput_ewma or inst_throughput, self._config.min_throughput)
+        lower, upper = self._bounds_for_remaining(remaining)
+        window, done, inst_throughput = self._pop_window_metrics(window_sec)
+        meta = self._running_meta(window, done, remaining, inst_throughput)
+        fallback = self._maybe_handle_zero_progress(done, lower, upper, meta)
+        if fallback:
+            return fallback
+        self._update_throughput_ewma(done, window, inst_throughput)
+        meta["throughput_ewma"] = self._throughput_ewma
+        throughput = self._resolved_throughput(inst_throughput)
         raw_remaining = remaining / throughput if throughput > 0 else upper
         estimate = _clip(raw_remaining, lower, upper)
         return EstimateRange(estimate, lower, upper, meta)
@@ -167,6 +144,63 @@ class ParallelJobTimeEstimator:
         if self._observed_max is not None:
             max_eff = max(min_eff, min(self._observed_max, self._max_per_task))
         return min_eff, max_eff
+
+    def _bounds_for_remaining(self, remaining: int) -> tuple[float, float]:
+        min_eff, max_eff = self._effective_bounds()
+        batches = _ceil_div(remaining, self._parallelism)
+        return min_eff * batches, max_eff * batches
+
+    def _pop_window_metrics(self, window_override: float | None) -> tuple[float, int, float]:
+        window = window_override if window_override and window_override > 0 else self._config.window_sec
+        done = self._window_completed
+        self._window_completed = 0
+        inst = done / window if window > 0 else 0.0
+        return window, done, inst
+
+    def _running_meta(
+        self,
+        window: float,
+        done: int,
+        remaining: int,
+        inst_throughput: float,
+    ) -> dict[str, float | int | None]:
+        return {
+            "mode": "running",
+            "throughput_inst": inst_throughput,
+            "throughput_ewma": self._throughput_ewma,
+            "alpha": self._config.ewma_alpha,
+            "window_sec": window,
+            "done_in_window": done,
+            "remaining_tasks": remaining,
+        }
+
+    def _maybe_handle_zero_progress(
+        self,
+        done: int,
+        lower: float,
+        upper: float,
+        meta: dict[str, float | int | None],
+    ) -> EstimateRange | None:
+        if done != 0:
+            return None
+        if self._config.fallback_on_zero_done == "use_upper":
+            return EstimateRange(upper, lower, upper, meta)
+        if self._throughput_ewma is None:
+            return EstimateRange(upper, lower, upper, meta)
+        return None
+
+    def _update_throughput_ewma(self, done: int, window: float, inst: float) -> None:
+        if done <= 0 or window <= 0:
+            return
+        if self._throughput_ewma is None:
+            self._throughput_ewma = inst
+            return
+        alpha = self._config.ewma_alpha
+        self._throughput_ewma = alpha * inst + (1 - alpha) * self._throughput_ewma
+
+    def _resolved_throughput(self, inst: float) -> float:
+        candidate = self._throughput_ewma if self._throughput_ewma is not None else inst
+        return max(candidate, self._config.min_throughput)
 
 
 @dataclass

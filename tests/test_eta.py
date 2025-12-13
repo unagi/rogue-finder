@@ -55,6 +55,27 @@ def test_update_progress_without_completions_uses_upper():
     assert estimate.estimate_sec == estimate.upper_sec
 
 
+def test_update_progress_reuses_previous_throughput_when_window_idle():
+    config = EstimatorConfig(window_sec=5.0, ewma_alpha=0.5)
+    estimator = ParallelJobTimeEstimator(parallelism=1, min_per_task=5.0, max_per_task=10.0, config=config)
+    estimator.estimate_before_start(3)
+    estimator.register_completion(6.0)
+    first = estimator.update_progress(remaining_tasks=2, window_sec=5.0)
+    assert first.estimate_sec <= first.upper_sec
+    second = estimator.update_progress(remaining_tasks=2, window_sec=5.0)
+    assert second.meta["throughput_ewma"] == pytest.approx(first.meta["throughput_ewma"])
+    assert second.meta["done_in_window"] == 0
+
+
+def test_update_progress_returns_zero_when_remaining_tasks_done():
+    estimator = ParallelJobTimeEstimator(parallelism=1, min_per_task=5.0, max_per_task=10.0)
+    estimator.estimate_before_start(1)
+    estimator.register_completion(5.0)
+    estimate = estimator.update_progress(remaining_tasks=0)
+    assert estimate.estimate_sec == 0.0
+    assert estimate.meta["remaining_tasks"] == 0
+
+
 def test_reset_keeps_observed_history_by_default():
     estimator = ParallelJobTimeEstimator(parallelism=1, min_per_task=5.0, max_per_task=60.0)
     estimator.register_completion(6.0)

@@ -86,6 +86,7 @@ def test_run_nmap_raises_on_nonzero_exit(monkeypatch):
             return self.returncode
 
         def kill(self):
+            # No-op: tests never send SIGKILL, but method must exist for subprocess API compatibility.
             pass
 
     created = {"count": 0}
@@ -139,11 +140,11 @@ def test_run_full_scan_returns_multiple_hosts_for_cidr(monkeypatch):
     <nmaprun>
       <host>
         <status state="up" />
-        <address addr="192.168.100.11" addrtype="ipv4" />
+        <address addr="192.0.2.11" addrtype="ipv4" />
       </host>
       <host>
         <status state="up" />
-        <address addr="192.168.100.13" addrtype="ipv4" />
+        <address addr="192.0.2.13" addrtype="ipv4" />
       </host>
     </nmaprun>
     """.strip()
@@ -151,13 +152,13 @@ def test_run_full_scan_returns_multiple_hosts_for_cidr(monkeypatch):
     port_xml = """
     <nmaprun>
       <host>
-        <address addr="192.168.100.11" addrtype="ipv4" />
+        <address addr="192.0.2.11" addrtype="ipv4" />
         <ports>
           <port protocol="tcp" portid="22"><state state="open"/></port>
         </ports>
       </host>
       <host>
-        <address addr="192.168.100.13" addrtype="ipv4" />
+        <address addr="192.0.2.13" addrtype="ipv4" />
         <ports>
           <port protocol="tcp" portid="80"><state state="open"/></port>
         </ports>
@@ -168,13 +169,13 @@ def test_run_full_scan_returns_multiple_hosts_for_cidr(monkeypatch):
     os_xml = """
     <nmaprun>
       <host>
-        <address addr="192.168.100.11" addrtype="ipv4" />
+        <address addr="192.0.2.11" addrtype="ipv4" />
         <os>
           <osmatch name="Linux" accuracy="90" />
         </os>
       </host>
       <host>
-        <address addr="192.168.100.13" addrtype="ipv4" />
+        <address addr="192.0.2.13" addrtype="ipv4" />
         <os>
           <osmatch name="Windows" accuracy="80" />
         </os>
@@ -190,17 +191,17 @@ def test_run_full_scan_returns_multiple_hosts_for_cidr(monkeypatch):
     monkeypatch.setattr(nmap_runner, "run_nmap", fake_run_nmap)
 
     results = nmap_runner.run_full_scan(
-        "192.168.100.0/30",
+        "192.0.2.0/30",
         {ScanMode.ICMP, ScanMode.PORTS, ScanMode.OS},
     )
 
     assert len(results) == EXPECTED_CIDR_HOSTS
     by_target = {item.target: item for item in results}
-    assert by_target["192.168.100.11"].open_ports == [22]
-    assert by_target["192.168.100.13"].open_ports == [80]
+    assert by_target["192.0.2.11"].open_ports == [22]
+    assert by_target["192.0.2.13"].open_ports == [80]
     if not MAC_WITHOUT_ROOT:
-        assert by_target["192.168.100.11"].os_guess == "Linux"
-        assert by_target["192.168.100.13"].os_guess == "Windows"
+        assert by_target["192.0.2.11"].os_guess == "Linux"
+        assert by_target["192.0.2.13"].os_guess == "Windows"
 
 
 def test_run_full_scan_marks_host_alive_when_only_ports(monkeypatch):

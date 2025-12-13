@@ -186,27 +186,39 @@ class ScanWorker(QObject):
         for completed, future in enumerate(as_completed(futures), start=1):
             if self._cancelled():
                 break
-            try:
-                result = future.result()
-                if isinstance(result, list):
-                    for payload in result:
-                        self.result_ready.emit(payload)
-                else:
-                    self.result_ready.emit(result)
-            except BrokenProcessPool as exc:
-                self.error.emit(
-                    build_error(
-                        ERROR_WORKER_POOL_FAILED,
-                        detail=str(exc),
-                    )
-                )
+            if self._handle_future_result(future):
                 break
-            except Exception as exc:
-                self.error.emit(build_error(ERROR_SCAN_CRASHED, detail=str(exc)))
             self.progress.emit(completed, total)
             if self._cancelled():
                 break
             self._close_single_log_channel(log_channels.pop(future, None))
+        self._close_remaining_channels(log_channels)
+
+    def _handle_future_result(self, future) -> bool:
+        try:
+            result = future.result()
+        except BrokenProcessPool as exc:
+            self.error.emit(
+                build_error(
+                    ERROR_WORKER_POOL_FAILED,
+                    detail=str(exc),
+                )
+            )
+            return True
+        except Exception as exc:
+            self.error.emit(build_error(ERROR_SCAN_CRASHED, detail=str(exc)))
+            return False
+        self._emit_result_payload(result)
+        return False
+
+    def _emit_result_payload(self, payload) -> None:
+        if isinstance(payload, list):
+            for item in payload:
+                self.result_ready.emit(item)
+            return
+        self.result_ready.emit(payload)
+
+    def _close_remaining_channels(self, log_channels: dict[object, Connection]) -> None:
         for conn in log_channels.values():
             self._close_single_log_channel(conn)
 

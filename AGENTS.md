@@ -48,6 +48,8 @@
 - CSV/JSON exports include score breakdowns and error strings so analysts can audit decisions without rerunning scans.
 - Keep dependencies minimal to maintain OSS friendliness; new libraries should be justified.
 - ETA values for advanced discovery and Safe Script are calculated from the target count, worker parallelism, and each phase’s timeout. The first batch assumes the full timeout, then subsequent batches shorten the estimate using the runtime history captured during the session.
+- When documenting example targets (README, docs, translations, tests), stick to the RFC 5737 documentation blocks (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`) instead of private LAN ranges; this keeps Sonar Security Hotspots satisfied while still conveying realistic inputs.
+- Keep `docs/rogue_finder_manual_en.md` and `docs/rogue_finder_manual_ja.md` in lockstep—whenever one changes structure or content, update the other so translators and operators can rely on identical guidance in both languages.
 
 ## How To Extend Safely
 - Add new scan phases by extending `ScanMode`, making sure cancellation is respected between phases and rating inputs remain deterministic.
