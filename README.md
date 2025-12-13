@@ -15,6 +15,7 @@ PySide6 desktop application that orchestrates lightweight Nmap discovery jobs, r
 - User Manual (English): [`docs/rogue_finder_manual_en.md`](docs/rogue_finder_manual_en.md)
 - ユーザーマニュアル (日本語): [`docs/rogue_finder_manual_ja.md`](docs/rogue_finder_manual_ja.md)
 - Scan execution reference: [`docs/scan_execution.md`](docs/scan_execution.md)
+- Architecture overview: [`docs/architecture_overview.md`](docs/architecture_overview.md)
 - Agent/developer briefing: [`AGENTS.md`](AGENTS.md)
 - Changelog: [`CHANGELOG.md`](CHANGELOG.md)
 
@@ -73,15 +74,17 @@ python -m nmap_gui.config --write-default ./rogue-finder.config.yaml
 ```
 
 ## Architecture Snapshot
-- `src/nmap_gui/gui.py` – `MainWindow` widgets, target input handling, and scan orchestration controls.
-- `src/nmap_gui/scan_manager.py` – bridges Qt signals to a `ProcessPoolExecutor` (spawn context) and handles cancellation.
-- `src/nmap_gui/nmap_runner.py` – wraps `nmap` subprocess calls, parses XML outputs, and emits `HostScanResult` objects.
-- `src/nmap_gui/rating.py` – deterministic scoring engine and priority band helpers.
-- `src/nmap_gui/exporters.py` – UTF-8 CSV/JSON exporters with score/error breakdowns.
-- `docs/scan_execution.md` – exact CLI invocations for Fast/Advanced/Safe actions.
+For the full component map see [`docs/architecture_overview.md`](docs/architecture_overview.md). At a high level:
+
+- `src/nmap_gui/main.py` boots `QApplication`, parses CLI flags, and shows `MainWindow`.
+- Widgets under `src/nmap_gui/gui/` collect targets, display results, and emit `ScanConfig` objects without blocking the GUI thread.
+- `src/nmap_gui/scan_manager.py` and `cancel_token.py` fan-out jobs to a `ProcessPoolExecutor` using the `spawn` context so Windows/macOS builds behave consistently.
+- `src/nmap_gui/nmap_runner.py` executes ICMP/port/OS/safe-script phases, adapts to privilege limitations, and parses XML into `models.HostScanResult`.
+- `rating.py`, `exporters.py`, and `job_eta.py` provide scoring, CSV/JSON output, and ETA calculations consumed by the GUI and tests.
 
 ## Documentation Hub
 - Discovery/diagnostics command matrix: [`docs/scan_execution.md`](docs/scan_execution.md)
+- Architecture deep dive: [`docs/architecture_overview.md`](docs/architecture_overview.md)
 - User manuals (EN/JA): see [Quick Links](#quick-links)
 - Agent/developer process notes: [`AGENTS.md`](AGENTS.md)
 - Release notes & automation details: [`CHANGELOG.md`](CHANGELOG.md) and [Release Builds workflow](https://github.com/unagi/rogue-finder/actions/workflows/pyinstaller.yml)
