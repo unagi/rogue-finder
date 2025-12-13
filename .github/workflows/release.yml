@@ -244,24 +244,34 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - publish-release
-    if: ${{ github.event_name == 'push' && github.ref_type == 'tag' && secrets.CHANGELOG_TOKEN != '' }}
+    if: github.event_name == 'push' && github.ref_type == 'tag'
     env:
       CHANGELOG_TOKEN: ${{ secrets.CHANGELOG_TOKEN }}
     steps:
+      - name: Skip when CHANGELOG_TOKEN is missing
+        if: env.CHANGELOG_TOKEN == ''
+        run: |
+          echo "CHANGELOG_TOKEN secret is not configured; skipping changelog PR job."
+          exit 0
+
       - name: Checkout
+        if: env.CHANGELOG_TOKEN != ''
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
 
       - name: Install git-cliff
+        if: env.CHANGELOG_TOKEN != ''
         uses: taiki-e/install-action@93ceae2e597c99cd0cbe22fe4c781b198c42e93e # git-cliff branch pin
 
       - name: Generate changelog
+        if: env.CHANGELOG_TOKEN != ''
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: git cliff -c cliff.toml -o CHANGELOG.md
 
       - name: Create changelog PR
+        if: env.CHANGELOG_TOKEN != ''
         uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c # v6.1.0
         with:
           token: ${{ env.CHANGELOG_TOKEN }}
