@@ -1,6 +1,18 @@
 # Changelog
 
 All notable changes to this project are documented here. The file is regenerated automatically by git-cliff based on commit history and pull request titles.
+## 0.2.2 - 2025-12-13
+
+
+### Documentation
+- docs: update changelog for v0.2.1 (2a79ad2)
+
+
+
+### Other
+- Expand tests and coverage (2f53b11)
+
+
 ## 0.2.1 - 2025-12-13
 
 
