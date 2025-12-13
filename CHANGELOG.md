@@ -1,7 +1,55 @@
 # Changelog
 
 All notable changes to this project are documented here. The file is regenerated automatically by git-cliff based on commit history and pull request titles.
-## [Unreleased]
+## 0.2.1 - 2025-12-13
+
+
+### CI
+- ci: add sonarcloud analysis (9581443)
+
+
+
+### Chores
+- chore: add sonar config and badge (5e8693c)
+
+
+
+### Documentation
+- docs: streamline README and manuals (002d89d)
+
+
+
+### Features
+- Add GUI configuration editor (fa6bfce)
+- Add coverage reporting and Pages deploy (433adaa)
+
+
+
+### Improvements
+- Improve fast ETA handling (4f90718)
+
+
+
+### Other
+- Simplify workflows and repair changelog automation (5941bd3)
+- Expand Ruff lint coverage and modernize typing (4a9be3d)
+- Silence Sonar hotspots and keep manuals in sync (c5b2655)
+- Raise coverage floor and add tests (80c87a5)
+- Skip changelog PR without PAT (3eb836d)
+- Gate changelog job via env (6f23006)
+
+
+## 0.2.0 - 2025-12-12
+
+
+### Changes
+- Enable Ruff PLR linting (f686750)
+
+
+
+### Chores
+- chore: automate changelog generation (eef3c90)
+
 
 
 ### Features
@@ -9,6 +57,28 @@ All notable changes to this project are documented here. The file is regenerated
 - Add YAML-based runtime configuration (50dd332)
 - Add persistent GUI state storage (62b726b)
 - Add lint task and PR CI workflow (d5c97be)
+- Add dual advanced actions and bundle platform icons (ea50b5c)
+- feat: embed diagnostics viewer and report storage (6b7694e)
+- feat: polish ui and packaging (8801a1f)
+- feat: polish ui and packaging (dfb58e8)
+
+
+
+### Fixes
+- fix: use proper pyinstaller add-data syntax (84757d7)
+- fix: add white background to app icon (a37b696)
+- fix: quote pyinstaller add-data args (e1da1cd)
+
+
+
+### Other
+- Enhance staged discovery workflow (af7f525)
+- Revert "feat: polish ui and packaging" (fbdac17)
+
+
+
+### Refactors
+- refactor gui architecture and fix lint (80ed39e)
 
 
 ## 0.1.1 - 2025-12-11
