@@ -2,16 +2,17 @@
 from __future__ import annotations
 
 import ipaddress
-import math
 import sys
+import time
 from datetime import datetime
-from typing import List, Sequence, Set
+from typing import Dict, List, Sequence, Set
 
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QFileDialog, QMainWindow, QMessageBox, QVBoxLayout, QWidget
 
 from ..config import AppSettings, get_settings
+from ..eta import EstimatorConfig, ParallelJobTimeEstimator, TaskSpec, WorkBasedEstimator
 from ..exporters import export_csv, export_json
 from ..i18n import detect_language, format_error_list, format_error_record, translate
 from ..job_eta import JobEtaController
@@ -61,8 +62,7 @@ class MainWindow(QMainWindow):
             self.setWindowIcon(app_icon)
         self.resize(1000, 700)
         self._pending_scan_configs: List[ScanConfig] = []
-        self._active_scan_kind: str | None = None
-        self._current_scan_targets: List[str] = []
+        self._active_scan_kind, self._current_scan_targets = None, []
         self._controls = ScanControlsPanel(self._t, self)
         self._connect_control_signals()
         self._result_grid = ResultGrid(
@@ -98,25 +98,11 @@ class MainWindow(QMainWindow):
         self._config_editor: ConfigEditorDialog | None = None
         self._setup_scan_manager()
         self._build_ui()
-        self._job_eta = JobEtaController(
-            self,
-            self.statusBar().showMessage,
-            summary_callback=None,
-        )
-        self._safe_scan_controller = SafeScanController(
-            settings=self._settings,
-            translator=self._t,
-            parent=self,
-            job_eta=self._job_eta,
-            status_callback=self.statusBar().showMessage,
-            set_summary_state=self._set_summary_state,
-            refresh_actions=self._refresh_action_buttons,
-            is_scan_active=lambda: self._scan_active,
-            set_diagnostics_status=self._set_diagnostics_status,
-            clear_safety_selection=self._result_grid.clear_safety_selection_for_target,
-            store_diagnostics_report=self._store_diagnostics_report,
-            estimate_parallel_seconds=self._estimate_parallel_total_seconds,
-        )
+        self._job_eta = self._create_job_eta()
+        self._init_fast_eta_state()
+        self._advanced_eta: ParallelJobTimeEstimator | None = None
+        self._advanced_eta_last_refresh: float | None = None
+        self._safe_scan_controller = self._create_safe_scan_controller()
         self._state_controller.apply(
             window=self,
             controls=self._controls,
@@ -165,6 +151,73 @@ class MainWindow(QMainWindow):
             return 1
         return network.num_addresses
 
+    def _create_job_eta(self) -> JobEtaController:
+        return JobEtaController(
+            self,
+            self.statusBar().showMessage,
+            summary_callback=None,
+        )
+
+    def _create_safe_scan_controller(self) -> SafeScanController:
+        return SafeScanController(
+            settings=self._settings,
+            translator=self._t,
+            parent=self,
+            job_eta=self._job_eta,
+            status_callback=self.statusBar().showMessage,
+            set_summary_state=self._set_summary_state,
+            refresh_actions=self._refresh_action_buttons,
+            is_scan_active=lambda: self._scan_active,
+            set_diagnostics_status=self._set_diagnostics_status,
+            clear_safety_selection=self._result_grid.clear_safety_selection_for_target,
+            store_diagnostics_report=self._store_diagnostics_report,
+        )
+
+    def _init_fast_eta_state(self) -> None:
+        self._fast_eta: WorkBasedEstimator | None = None
+        self._fast_task_specs: Dict[str, TaskSpec] = {}
+        self._fast_completed_targets: Set[str] = set()
+        self._fast_total_work = 0.0
+
+    def _prepare_fast_scan_state(self, targets: Sequence[str]) -> None:
+        self._stop_fast_eta()
+        specs, total_work = self._build_fast_task_specs(targets)
+        self._fast_task_specs = specs
+        self._fast_total_work = total_work
+        self._fast_completed_targets = set()
+        self._result_grid.configure_fast_progress(len(targets), total_work)
+
+    def _build_fast_task_specs(self, targets: Sequence[str]) -> tuple[Dict[str, TaskSpec], float]:
+        specs: Dict[str, TaskSpec] = {}
+        total_work = 0.0
+        for target in targets:
+            work = float(max(self._estimate_hosts_for_target(target), 1))
+            specs[target] = TaskSpec(task_id=target, size=work)
+            total_work += work
+        return specs, total_work
+
+    def _start_fast_eta(self, targets: Sequence[str]) -> None:
+        if not self._fast_task_specs:
+            return
+        rate = self._fast_initial_rate(self._fast_total_work)
+        self._fast_eta = WorkBasedEstimator(worker_count=1, initial_rate=rate, alpha=0.3)
+        estimate = self._fast_eta.estimate_before_start(self._fast_task_specs.values())
+        self._result_grid.start_fast_progress(estimate.estimate_sec)
+        if estimate.estimate_sec > 0:
+            self._job_eta.start(
+                kind="fast",
+                expected_seconds=estimate.estimate_sec,
+                message_builder=self._build_fast_eta_message,
+            )
+        else:
+            self._job_eta.stop("fast")
+
+    def _fast_initial_rate(self, total_work: float) -> float:
+        base_rate = 1.0 / 3.0  # ~3 seconds per host for minimal targets
+        scale = 0.06
+        dynamic = base_rate + scale * max(total_work - 1.0, 0.0)
+        return min(max(dynamic, base_rate), 30.0)
+
     def _update_summary(self) -> None:
         self._result_store.update_summary(
             target_count=self._target_count,
@@ -189,7 +242,7 @@ class MainWindow(QMainWindow):
         self._requested_host_estimate = self._estimate_requested_hosts(targets)
         self._summary_has_error = False
         self._reset_result_storage(emit_selection_changed=False)
-        self._result_grid.reset_progress(len(targets))
+        self._prepare_fast_scan_state(targets)
         self._set_summary_state("summary_status_scanning")
         config = ScanConfig(
             targets=targets,
@@ -205,6 +258,7 @@ class MainWindow(QMainWindow):
         self._scan_manager.start(config)
         self._scan_active = True
         self._update_controls_state()
+        self._start_fast_eta(targets)
         self.statusBar().showMessage(
             self._t("fast_scan_running_status").format(
                 count=self._target_count,
@@ -316,6 +370,9 @@ class MainWindow(QMainWindow):
         self._scan_active = False
         self._set_summary_state("summary_status_stopped")
         self._job_eta.stop("advanced")
+        self._job_eta.stop("fast")
+        self._stop_fast_eta()
+        self._reset_advanced_eta()
         self._refresh_action_buttons()
         if self._log_dialog:
             self._log_dialog.mark_scan_finished()
@@ -324,7 +381,12 @@ class MainWindow(QMainWindow):
         self._result_grid.reset_progress(total)
 
     def _on_progress(self, done: int, total: int) -> None:
+        if self._active_scan_kind == "fast" and self._result_grid.handle_fast_progress_update(done, total):
+            return
         self._result_grid.set_progress(done, total)
+        if self._active_scan_kind == "advanced":
+            remaining = max(total - done, 0)
+            self._refresh_advanced_eta_timer(remaining)
 
     def _on_result(self, result: HostScanResult) -> None:
         if self._active_scan_kind == "advanced":
@@ -412,28 +474,98 @@ class MainWindow(QMainWindow):
         if self._consume_placeholder_error(result):
             return
         self._result_store.add_or_update(result)
+        if self._fast_eta is not None:
+            self._register_fast_completion(result.target)
 
     def _handle_advanced_result(self, result: HostScanResult) -> None:
         if self._consume_placeholder_error(result):
             return
         self._result_store.add_or_update(result)
+        if self._advanced_eta is not None:
+            self._advanced_eta.register_completion()
 
     def _announce_advanced_eta(self, target_count: int) -> None:
-        eta_seconds = self._estimate_parallel_total_seconds(
-            target_count,
-            float(self._settings.scan.advanced_timeout_seconds),
-            timeout_seconds=float(self._settings.scan.advanced_timeout_seconds),
-            parallelism=self._settings.scan.advanced_max_parallel,
-        )
+        self._advanced_eta = self._build_advanced_eta_estimator()
+        self._advanced_eta_last_refresh = time.monotonic()
+        estimate = self._advanced_eta.estimate_before_start(target_count)
         self._job_eta.start(
             kind="advanced",
-            expected_seconds=eta_seconds,
+            expected_seconds=estimate.estimate_sec,
             message_builder=self._build_advanced_eta_message,
         )
 
     def _build_advanced_eta_message(self, remaining: float) -> str:
         eta_text = self._format_eta_seconds(remaining)
         return self._t("advanced_running_status_eta").format(eta=eta_text)
+
+    def _build_fast_eta_message(self, remaining: float) -> str:
+        eta_text = self._format_eta_seconds(remaining)
+        return self._t("fast_scan_running_status_eta").format(eta=eta_text)
+
+    def _build_advanced_eta_estimator(self) -> ParallelJobTimeEstimator:
+        timeout = float(self._settings.scan.advanced_timeout_seconds)
+        min_guess = max(1.0, min(timeout / 6.0, 20.0))
+        config = EstimatorConfig(window_sec=5.0)
+        return ParallelJobTimeEstimator(
+            parallelism=max(1, self._settings.scan.advanced_max_parallel),
+            min_per_task=min_guess,
+            max_per_task=timeout,
+            config=config,
+        )
+
+    def _refresh_advanced_eta_timer(self, remaining_jobs: int) -> None:
+        if self._advanced_eta is None:
+            return
+        now = time.monotonic()
+        window = None
+        if self._advanced_eta_last_refresh is not None:
+            window = max(now - self._advanced_eta_last_refresh, 0.0)
+        self._advanced_eta_last_refresh = now
+        estimate = self._advanced_eta.update_progress(remaining_jobs, window_sec=window)
+        self._job_eta.start(
+            kind="advanced",
+            expected_seconds=estimate.estimate_sec,
+            message_builder=self._build_advanced_eta_message,
+        )
+
+    def _reset_advanced_eta(self) -> None:
+        self._advanced_eta = None
+        self._advanced_eta_last_refresh = None
+
+    def _register_fast_completion(self, target: str) -> None:
+        if self._fast_eta is None:
+            return
+        spec = self._fast_task_specs.get(target)
+        if spec is None:
+            return
+        self._fast_completed_targets.add(target)
+        remaining_specs = [
+            task for tid, task in self._fast_task_specs.items() if tid not in self._fast_completed_targets
+        ]
+        estimate = self._fast_eta.update(
+            now_ts=time.monotonic(),
+            completed=[spec],
+            remaining=remaining_specs,
+        )
+        if estimate.estimate_sec <= 0:
+            self._job_eta.stop("fast")
+        else:
+            self._job_eta.start(
+                kind="fast",
+                expected_seconds=estimate.estimate_sec,
+                message_builder=self._build_fast_eta_message,
+            )
+        if remaining_specs:
+            self._result_grid.update_fast_progress_eta(estimate.estimate_sec)
+        else:
+            self._result_grid.complete_fast_progress()
+
+    def _stop_fast_eta(self) -> None:
+        self._fast_eta = None
+        self._fast_task_specs = {}
+        self._fast_completed_targets = set()
+        self._fast_total_work = 0.0
+        self._result_grid.reset_fast_progress()
 
     def _build_advanced_config(self, targets: Sequence[str], *, include_os: bool) -> ScanConfig:
         modes: Set[ScanMode] = {ScanMode.PORTS}
@@ -456,24 +588,6 @@ class MainWindow(QMainWindow):
             return f"{hours:d}:{mins:02d}:{secs:02d}"
         return f"{mins:02d}:{secs:02d}"
 
-    def _estimate_parallel_total_seconds(
-        self,
-        job_count: int,
-        per_job_seconds: float,
-        *,
-        timeout_seconds: float,
-        parallelism: int,
-    ) -> float:
-        if job_count <= 0:
-            return 0.0
-        per_job = max(0.0, min(per_job_seconds, timeout_seconds))
-        slots = max(1, parallelism)
-        batches = math.ceil(job_count / slots)
-        return per_job * batches
-
-
-
-
     def _on_error(self, payload) -> None:
         if isinstance(payload, ErrorRecord):
             message = format_error_record(payload, self._language)
@@ -484,6 +598,9 @@ class MainWindow(QMainWindow):
         self._summary_has_error = True
         self._set_summary_state("summary_status_error")
         self._job_eta.stop("advanced")
+        self._job_eta.stop("fast")
+        self._stop_fast_eta()
+        self._reset_advanced_eta()
         self._result_grid.finish_progress()
         if self._log_dialog:
             self._log_dialog.mark_scan_finished()
@@ -502,6 +619,9 @@ class MainWindow(QMainWindow):
             return
         self._result_grid.finish_progress()
         self._job_eta.stop("advanced")
+        self._job_eta.stop("fast")
+        self._stop_fast_eta()
+        self._reset_advanced_eta()
         self._scan_active = False
         self._pending_scan_configs.clear()
         self._active_scan_kind = None
