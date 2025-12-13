@@ -3,6 +3,7 @@
 [![CI](https://github.com/unagi/rogue-finder/actions/workflows/ci.yml/badge.svg)](https://github.com/unagi/rogue-finder/actions/workflows/ci.yml)
 [![Release Builds](https://github.com/unagi/rogue-finder/actions/workflows/release.yml/badge.svg)](https://github.com/unagi/rogue-finder/actions/workflows/release.yml)
 [![Latest Release](https://img.shields.io/github/v/release/unagi/rogue-finder?sort=semver)](https://github.com/unagi/rogue-finder/releases)
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=unagi_rogue-finder&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=unagi_rogue-finder)
 
 PySide6 desktop application that orchestrates lightweight Nmap discovery jobs, ranks hosts via a transparent heuristic model, and exports audit-friendly evidence so analysts can focus commercial scanners where it matters most.
 
