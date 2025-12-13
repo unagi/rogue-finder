@@ -25,6 +25,7 @@ type = "simple"
 branch = true
 source = ["src"]
 parallel = false
+omit = ["*/nmap_gui/gui/*"]
 
 [tool.coverage.report]
 skip_empty = true

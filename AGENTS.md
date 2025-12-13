@@ -32,6 +32,7 @@
   4. Run the suite with `poe test` (wraps `coverage run -m pytest --spec`, producing XML + HTML reports). Tests live under `tests/` and already cover `models.sanitize_targets` and rating heuristics.
   5. Run `poe lint` (backs `ruff check src tests`) before committing to keep packaging imports and style consistent.
 - Pull requests automatically run `poe lint` and `poe test` via `.github/workflows/ci.yml`. Keep those tasks green before requesting review.
+- Treat line coverage below 80% as a release blocker; when `poe test` reports less than that threshold, add or expand tests before merging so CI stays consistently green.
 - When packaging, rely on `.github/workflows/release.yml` (“Release Builds”)—pushes to `main` keep Windows artifacts fresh, and annotated tags trigger both Windows + macOS builds, release uploads, coverage-to-Pages, and the automated changelog PR step.
 - When editing any GitHub Actions workflow, pin every `uses:` reference to a full-length commit SHA. Pick the desired release tag (usually “latest patch within the in-use major”) with `gh release list --repo OWNER/REPO`, then resolve its commit via `gh api repos/OWNER/REPO/git/refs/tags/<tag>` (or `/heads/<branch>` when an action only ships branches). Paste the SHA plus a trailing comment like `# actions/checkout@v4.3.1` so future upgrades know which tag was locked.
 - Avoid hand-editing the changelog; regenerate locally via `git cliff -c cliff.toml -o CHANGELOG.md` if you need to preview.
