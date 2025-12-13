@@ -244,7 +244,9 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - publish-release
-    if: github.event_name == 'push' && github.ref_type == 'tag'
+    if: ${{ github.event_name == 'push' && github.ref_type == 'tag' && secrets.CHANGELOG_TOKEN != '' }}
+    env:
+      CHANGELOG_TOKEN: ${{ secrets.CHANGELOG_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -262,7 +264,7 @@ jobs:
       - name: Create changelog PR
         uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c # v6.1.0
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ env.CHANGELOG_TOKEN }}
           commit-message: "docs: update changelog for ${{ github.ref_name }}"
           branch: chore/changelog/${{ github.ref_name }}
           base: main
