@@ -3,7 +3,7 @@
 ## Purpose & Scope
 - Desktop utility built with PySide6 that orchestrates lightweight Nmap discovery jobs and ranks targets so analysts can decide where to spend commercial scanner time.
 - Nmap is never bundled. The local `nmap` binary must exist on `PATH`; failures manifest as `NmapNotInstalledError` from `nmap_runner.ensure_nmap_available()`.
-- The GUI is intended to stay portable (Windows/macOS/Linux) and drive PyInstaller packaging via `.github/workflows/pyinstaller.yml`.
+- The GUI is intended to stay portable (Windows/macOS/Linux) and drive PyInstaller packaging via `.github/workflows/release.yml`.
 
 ## Runtime Architecture
 - Entry point is `python -m nmap_gui.main` (or `src/nmap_gui/main.py`). It wires an `argparse --debug` flag, initializes `QApplication`, and shows `MainWindow`.
@@ -32,7 +32,7 @@
   4. Run the suite with `poe test` (this now shells out to `uv run pytest --spec`). Tests live under `tests/` and already cover `models.sanitize_targets` and rating heuristics.
   5. Run `poe lint` (backs `ruff check src tests`) before committing to keep packaging imports and style consistent.
 - Pull requests automatically run `poe lint` and `poe test` via `.github/workflows/ci.yml`. Keep those tasks green before requesting review.
-- When packaging, rely on `.github/workflows/pyinstaller.yml` (“Release Builds”)—pushes to `main` keep Windows artifacts fresh, and annotated tags trigger both Windows + macOS builds, release uploads, and the automated changelog PR step.
+- When packaging, rely on `.github/workflows/release.yml` (“Release Builds”)—pushes to `main` keep Windows artifacts fresh, and annotated tags trigger both Windows + macOS builds, release uploads, coverage-to-Pages, and the automated changelog PR step.
 - Avoid hand-editing the changelog; regenerate locally via `git cliff -c cliff.toml -o CHANGELOG.md` if you need to preview.
 
 ## Development Mindset

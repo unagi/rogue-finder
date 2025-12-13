@@ -37,3 +37,10 @@ jobs:
 
       - name: Run tests
         run: poe test
+
+      - name: Upload coverage HTML artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html-${{ github.run_id }}
+          path: htmlcov

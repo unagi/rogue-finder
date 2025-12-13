@@ -1,7 +1,7 @@
 # Nmap GUI Discovery & Rating Tool
 
 [![CI](https://github.com/unagi/rogue-finder/actions/workflows/ci.yml/badge.svg)](https://github.com/unagi/rogue-finder/actions/workflows/ci.yml)
-[![Release Builds](https://github.com/unagi/rogue-finder/actions/workflows/pyinstaller.yml/badge.svg)](https://github.com/unagi/rogue-finder/actions/workflows/pyinstaller.yml)
+[![Release Builds](https://github.com/unagi/rogue-finder/actions/workflows/release.yml/badge.svg)](https://github.com/unagi/rogue-finder/actions/workflows/release.yml)
 [![Latest Release](https://img.shields.io/github/v/release/unagi/rogue-finder?sort=semver)](https://github.com/unagi/rogue-finder/releases)
 
 PySide6 desktop application that orchestrates lightweight Nmap discovery jobs, ranks hosts via a transparent heuristic model, and exports audit-friendly evidence so analysts can focus commercial scanners where it matters most.
@@ -35,6 +35,7 @@ PySide6 desktop application that orchestrates lightweight Nmap discovery jobs, r
    poe lint
    poe test
    ```
+   `poe test` now runs via `coverage`, leaving `coverage.xml` and an `htmlcov/` folder for SonarQube/GitHub Pages (both ignored by git).
 4. **Launch the GUI**
    ```bash
    python -m nmap_gui.main --debug
@@ -87,19 +88,19 @@ For the full component map see [`docs/architecture_overview.md`](docs/architectu
 - Architecture deep dive: [`docs/architecture_overview.md`](docs/architecture_overview.md)
 - User manuals (EN/JA): see [Quick Links](#quick-links)
 - Agent/developer process notes: [`AGENTS.md`](AGENTS.md)
-- Release notes & automation details: [`CHANGELOG.md`](CHANGELOG.md) and [Release Builds workflow](https://github.com/unagi/rogue-finder/actions/workflows/pyinstaller.yml)
+- Release notes & automation details: [`CHANGELOG.md`](CHANGELOG.md) and [Release workflow](https://github.com/unagi/rogue-finder/actions/workflows/release.yml)
 
 ## Development Guide
 The repo standardizes on uv + Poe for reproducible environments.
 
 - **Environment setup:** `uv venv && source .venv/bin/activate`, then `uv pip install -r requirements-dev.txt`.
-- **Tooling:** `poe lint` (backs `ruff check src tests`), `poe test` (runs `uv run pytest --spec`).
+- **Tooling:** `poe lint` (backs `ruff check src tests`), `poe test` (runs `coverage run -m pytest --spec` + emits XML/HTML coverage reports).
 - **Optional helpers:** `uv tool install poethepoet && uv tool update-shell` to expose the `poe` shim globally.
 - **Safe-script fixtures & XML parsing tests** already live in `tests/`; add coverage whenever rating or scan behavior changes.
 
 ### CI & Release Automation
 - **CI workflow (`ci.yml`):** runs lint + pytest on pushes/PRs targeting `main`.
-- **Release Builds workflow (`pyinstaller.yml`):** produces Windows artifacts on every push to `main`, and both Windows/macOS packages plus changelog PRs for annotated tags or manual dispatches.
+- **Release workflow (`release.yml`):** gates PyInstaller builds behind the same coverage-tested suite, uploads HTML coverage as artifacts, and on tags publishes installers, changelog PRs, and the latest coverage report to GitHub Pages.
 - **Changelog generation:** `git-cliff` is invoked automatically during tag builds; avoid hand-editing `CHANGELOG.md` outside that flow.
 
 ## Support & Feedback

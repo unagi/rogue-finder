@@ -4,13 +4,29 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 
 [tool.poe.tasks.test]
-cmd = "uv run pytest"
+shell = """
+uv run coverage run -m pytest
+uv run coverage xml
+uv run coverage html
+"""
 
 [tool.poe.tasks.lint]
 cmd = "uv run ruff check src tests"
 
 [tool.poe.executor]
 type = "simple"
+
+[tool.coverage.run]
+branch = true
+source = ["src"]
+parallel = false
+
+[tool.coverage.report]
+skip_empty = true
+show_missing = true
+
+[tool.coverage.html]
+directory = "htmlcov"
 
 [tool.poe.tasks.build-macos]
 cmd = """
