@@ -19,7 +19,7 @@ Rogue Finder is a cross-platform desktop utility that orchestrates lightweight N
 
 ## Using the Application
 1. **Start the GUI** — double-click the `rogue-finder` executable (or run `rogue-finder.exe` / `./rogue-finder`).
-2. **Enter targets** — paste comma-, newline-, tab-, or semicolon-separated targets into the input field. Examples: `10.0.0.0/24`, `server01.local`, `192.168.5.10`.
+2. **Enter targets** — paste comma-, newline-, tab-, or semicolon-separated targets into the input field. Examples: `198.51.100.0/24`, `server01.local`, `203.0.113.10`.
 3. **Select scan modes** — ICMP, Ports, and OS scans are all enabled by default. Disable phases you do not need by unchecking the boxes.
 4. **Start scanning** — press **Start**. The status bar will show “Scanning…” and the progress bar tracks completed targets. Use **Stop** to cancel.
 5. **Review results** — each row displays alive state, ports, OS guess, score, priority color, and any error/action guidance. High-value hosts appear first when you sort by score or priority.

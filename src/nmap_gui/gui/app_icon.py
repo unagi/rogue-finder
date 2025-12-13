@@ -9,6 +9,8 @@ from pathlib import Path
 from PySide6.QtGui import QIcon
 
 ASSET_SUBPATH = Path("assets") / "icons"
+# NOTE: Icon filenames intentionally repeat across platform maps/fallbacks;
+# mark duplicate-literal warnings as reviewed rather than deduplicating strings.
 PLATFORM_ICON = {
     "win32": "rogue-finder.ico",
     "cygwin": "rogue-finder.ico",

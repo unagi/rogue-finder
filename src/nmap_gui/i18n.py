@@ -10,13 +10,16 @@ from .models import ErrorRecord
 Translations = dict[str, str]
 
 
+# NOTE: Translation tables intentionally reuse identical strings across keys;
+# Sonar duplicate-literal warnings (e.g., S1192) should be marked as reviewed
+# rather than deduplicated to keep future localization flexible.
 _TRANSLATIONS: dict[str, Translations] = {
     "en": {
         "error_action_label": "Action",
         "window_title": "Nmap Discovery & Rating",
         "scan_settings": "Scan Settings",
         "targets_label": "Targets (IP / CIDR / hostname)",
-        "targets_placeholder": "192.168.0.0/24\n10.0.0.5\nserver.local",
+        "targets_placeholder": "198.51.100.0/24\n203.0.113.5\nserver.local",
         "start": "Start",
         "stop": "Stop",
         "fast_scan_button": "Fast Discovery",
@@ -218,7 +221,7 @@ _TRANSLATIONS: dict[str, Translations] = {
         "window_title": "Nmap 解析・評価",
         "scan_settings": "スキャン設定",
         "targets_label": "ターゲット (IP / CIDR / ホスト名)",
-        "targets_placeholder": "192.168.0.0/24\n10.0.0.5\nserver.local",
+        "targets_placeholder": "198.51.100.0/24\n203.0.113.5\nserver.local",
         "start": "開始",
         "stop": "停止",
         "fast_scan_button": "高速ディスカバリ",

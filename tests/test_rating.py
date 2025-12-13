@@ -26,7 +26,7 @@ SSH_DB_COMBO_POINTS = _combo_points({22}, {3306, 5432})
 
 def test_rating_hits_high_priority_when_rules_align() -> None:
     result = HostScanResult(
-        target="10.0.0.5",
+        target="198.51.100.5",
         is_alive=True,
         open_ports=[22, 3306, 50000],
         os_guess="Windows Server 2019",
@@ -46,7 +46,7 @@ def test_rating_hits_high_priority_when_rules_align() -> None:
 
 def test_combo_rule_requires_all_ports() -> None:
     result = HostScanResult(
-        target="10.0.0.6",
+        target="198.51.100.6",
         is_alive=True,
         open_ports=[8080, 5672],  # missing 15672 so combo should not trigger
         os_guess="Linux",
@@ -67,7 +67,7 @@ def test_combo_rule_requires_all_ports() -> None:
 
 def test_legacy_linux_detection_adds_correct_points() -> None:
     result = HostScanResult(
-        target="10.0.0.7",
+        target="198.51.100.7",
         is_alive=False,
         open_ports=[],
         os_guess="Ubuntu 12.04 LTS (Linux 3.2)",

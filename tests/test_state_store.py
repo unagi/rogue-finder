@@ -11,7 +11,7 @@ from nmap_gui.storage_warnings import consume_storage_warnings
 def test_save_and_load_round_trip(tmp_path) -> None:
     path = tmp_path / "rogue-finder.state.bin"
     state = AppState(
-        targets_text="10.0.0.1",
+        targets_text="198.51.100.1",
         icmp_enabled=False,
         ports_enabled=False,
         os_enabled=True,

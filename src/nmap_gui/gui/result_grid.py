@@ -551,8 +551,8 @@ class ResultGrid(QObject):
     def _handle_advanced_checkbox(self, target: str, checked: bool) -> bool:
         if checked:
             self._advanced_selection.add(target)
-            return True
-        self._advanced_selection.discard(target)
+        else:
+            self._advanced_selection.discard(target)
         return True
 
     def _handle_safety_checkbox(self, target: str, checked: bool) -> bool:
