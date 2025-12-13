@@ -16,7 +16,7 @@ This document summarizes the moving pieces inside Rogue Finder so contributors c
 | --- | --- |
 | `gui/main_window.py` | Creates the primary window, menus, and status bar. |
 | `gui/scan_controls.py` | Input widgets, scan mode toggles, and Start/Stop buttons. |
-| `gui/summary_panel.py` & `result_grid.py` | Display scan progress, scores, and actionable rows. |
+| `gui/summary_panel.py` & `gui/result_grid.py` | Display scan progress, scores, and actionable rows. |
 | `gui/safe_scan_controller.py`, `safe_scan_dialog.py`, `safe_scan_report_viewer.py` | Manage Safe Script diagnostics, concurrency limits, report display, and export. |
 | `gui/config_editor.py` | Optional YAML editor launched from the GUI to tweak `rogue-finder.config.yaml`. |
 | `gui/state_controller.py` & `state_store.py` | Persist UI state (window size, column order, etc.) between sessions. |

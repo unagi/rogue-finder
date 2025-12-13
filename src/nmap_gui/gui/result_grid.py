@@ -17,8 +17,8 @@ from PySide6.QtWidgets import (
     QProgressBar,
 )
 
-from .i18n import format_error_list
-from .models import HostScanResult
+from ..i18n import format_error_list
+from ..models import HostScanResult
 
 
 TARGET_COLUMN_INDEX = 0

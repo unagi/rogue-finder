@@ -24,7 +24,7 @@ from ..models import (
     ScanMode,
     sanitize_targets,
 )
-from ..result_grid import ResultGrid
+from .result_grid import ResultGrid
 from ..scan_manager import ScanManager
 from ..state_store import AppState
 from .config_editor import ConfigEditorDialog

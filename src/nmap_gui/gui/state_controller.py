@@ -7,7 +7,7 @@ from typing import Callable
 from PySide6.QtCore import QByteArray, QTimer
 from PySide6.QtWidgets import QMainWindow, QMessageBox
 
-from ..result_grid import ResultGrid
+from .result_grid import ResultGrid
 from ..state_store import AppState, load_state, save_state
 from ..storage_warnings import StorageWarning, consume_storage_warnings
 from .scan_controls import ScanControlsPanel

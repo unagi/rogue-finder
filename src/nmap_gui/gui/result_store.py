@@ -5,7 +5,7 @@ import copy
 from typing import Dict, List, Sequence
 
 from ..models import HostScanResult, SafeScanReport
-from ..result_grid import ResultGrid
+from .result_grid import ResultGrid
 from .summary_panel import SummaryPanel
 
 
