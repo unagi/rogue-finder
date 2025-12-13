@@ -4,14 +4,14 @@ from __future__ import annotations
 import argparse
 import copy
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, Tuple
+from typing import Any
 
 import yaml
 
 from .storage_warnings import record_storage_warning
-
 
 CONFIG_FILENAME = "rogue-finder.config.yaml"
 
@@ -26,7 +26,7 @@ def config_file_path(config_path: Path | str | None = None) -> Path:
     return Path(config_path)
 
 
-DEFAULT_SETTINGS: Dict[str, Any] = {
+DEFAULT_SETTINGS: dict[str, Any] = {
     "version": 1,
     "scan": {
         "default_timeout_seconds": 300,
@@ -138,35 +138,35 @@ class ConfigurationError(RuntimeError):
 @dataclass(frozen=True)
 class ScanSettings:
     default_timeout_seconds: int
-    port_scan_list: Tuple[int, ...]
+    port_scan_list: tuple[int, ...]
     high_port_minimum: int
-    fast_port_scan_list: Tuple[int, ...]
+    fast_port_scan_list: tuple[int, ...]
     advanced_timeout_seconds: int
     advanced_max_parallel: int
 
 
 @dataclass(frozen=True)
 class ComboRule:
-    required: Tuple[int, ...]
-    one_of: Tuple[int, ...]
+    required: tuple[int, ...]
+    one_of: tuple[int, ...]
     points: int
 
 
 @dataclass(frozen=True)
 class RatingSettings:
     icmp_points: int
-    port_weights: Dict[int, int]
-    combo_rules: Tuple[ComboRule, ...]
+    port_weights: dict[int, int]
+    combo_rules: tuple[ComboRule, ...]
     high_port_bonus_port: int
     high_port_bonus_points: int
-    os_weights: Dict[str, int]
+    os_weights: dict[str, int]
     priority_high_threshold: int
     priority_medium_threshold: int
 
 
 @dataclass(frozen=True)
 class UiSettings:
-    priority_colors: Dict[str, str]
+    priority_colors: dict[str, str]
 
 
 @dataclass(frozen=True)
@@ -185,7 +185,7 @@ class AppSettings:
     rating: RatingSettings
     ui: UiSettings
     safe_scan: SafeScanSettings
-    raw: Dict[str, Any]
+    raw: dict[str, Any]
 
 
 _SETTINGS_CACHE: AppSettings | None = None
@@ -231,7 +231,7 @@ def write_default_config(destination: Path | str) -> Path:
     return target
 
 
-def merge_with_defaults(user_values: Dict[str, Any] | None) -> Dict[str, Any]:
+def merge_with_defaults(user_values: dict[str, Any] | None) -> dict[str, Any]:
     """Merge ``user_values`` with the default template without touching disk."""
 
     if user_values is None:
@@ -239,14 +239,14 @@ def merge_with_defaults(user_values: Dict[str, Any] | None) -> Dict[str, Any]:
     return _merge_with_defaults(copy.deepcopy(DEFAULT_SETTINGS), user_values)
 
 
-def write_settings(data: Dict[str, Any], config_path: Path | str | None = None) -> bool:
+def write_settings(data: dict[str, Any], config_path: Path | str | None = None) -> bool:
     """Persist ``data`` to the configuration file location."""
 
     path = config_file_path(config_path)
     return _write_yaml(path, data)
 
 
-def _read_or_create_config(path: Path) -> Dict[str, Any]:
+def _read_or_create_config(path: Path) -> dict[str, Any]:
     if not path.exists():
         _write_yaml(path, copy.deepcopy(DEFAULT_SETTINGS))
         return copy.deepcopy(DEFAULT_SETTINGS)
@@ -255,7 +255,7 @@ def _read_or_create_config(path: Path) -> Dict[str, Any]:
     return loaded
 
 
-def _write_yaml(path: Path, data: Dict[str, Any]) -> bool:
+def _write_yaml(path: Path, data: dict[str, Any]) -> bool:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", encoding="utf-8") as handle:
@@ -267,8 +267,8 @@ def _write_yaml(path: Path, data: Dict[str, Any]) -> bool:
     return True
 
 
-def _merge_with_defaults(defaults: Dict[str, Any], user_values: Dict[str, Any]) -> Dict[str, Any]:
-    merged: Dict[str, Any] = {}
+def _merge_with_defaults(defaults: dict[str, Any], user_values: dict[str, Any]) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
     for key in user_values:
         merged[key] = user_values[key]
     for key, value in defaults.items():
@@ -282,7 +282,7 @@ def _merge_with_defaults(defaults: Dict[str, Any], user_values: Dict[str, Any]) 
     return merged
 
 
-def _build_settings(data: Dict[str, Any]) -> AppSettings:
+def _build_settings(data: dict[str, Any]) -> AppSettings:
     scan = _build_scan_settings(data.get("scan", {}))
     rating = _build_rating_settings(data.get("rating", {}))
     ui = _build_ui_settings(data.get("ui", {}))
@@ -290,17 +290,22 @@ def _build_settings(data: Dict[str, Any]) -> AppSettings:
     return AppSettings(scan=scan, rating=rating, ui=ui, safe_scan=safe_scan, raw=data)
 
 
-def _build_scan_settings(data: Dict[str, Any]) -> ScanSettings:
-    timeout = int(data.get("default_timeout_seconds", DEFAULT_SETTINGS["scan"]["default_timeout_seconds"]))
-    high_port_min = int(data.get("high_port_minimum", DEFAULT_SETTINGS["scan"]["high_port_minimum"]))
+def _build_scan_settings(data: dict[str, Any]) -> ScanSettings:
+    scan_defaults = DEFAULT_SETTINGS["scan"]
+    timeout = int(
+        data.get("default_timeout_seconds", scan_defaults["default_timeout_seconds"])
+    )
+    high_port_min = int(data.get("high_port_minimum", scan_defaults["high_port_minimum"]))
     ports = tuple(int(port) for port in data.get("port_scan_list", ()))
     if not ports:
-        ports = tuple(DEFAULT_SETTINGS["scan"]["port_scan_list"])
+        ports = tuple(scan_defaults["port_scan_list"])
     fast_ports = tuple(int(port) for port in data.get("fast_port_scan_list", ()))
     if not fast_ports:
-        fast_ports = tuple(DEFAULT_SETTINGS["scan"]["fast_port_scan_list"])
-    advanced_timeout = int(data.get("advanced_timeout_seconds", DEFAULT_SETTINGS["scan"]["advanced_timeout_seconds"]))
-    advanced_max = int(data.get("advanced_max_parallel", DEFAULT_SETTINGS["scan"]["advanced_max_parallel"]))
+        fast_ports = tuple(scan_defaults["fast_port_scan_list"])
+    advanced_timeout = int(
+        data.get("advanced_timeout_seconds", scan_defaults["advanced_timeout_seconds"])
+    )
+    advanced_max = int(data.get("advanced_max_parallel", scan_defaults["advanced_max_parallel"]))
     if advanced_max <= 0:
         advanced_max = 1
     return ScanSettings(
@@ -313,7 +318,7 @@ def _build_scan_settings(data: Dict[str, Any]) -> ScanSettings:
     )
 
 
-def _build_combo_rules(items: Iterable[Dict[str, Any]]) -> Tuple[ComboRule, ...]:
+def _build_combo_rules(items: Iterable[dict[str, Any]]) -> tuple[ComboRule, ...]:
     rules = []
     for entry in items:
         required = tuple(int(port) for port in entry.get("required", []))
@@ -325,7 +330,7 @@ def _build_combo_rules(items: Iterable[Dict[str, Any]]) -> Tuple[ComboRule, ...]
     return tuple(rules)
 
 
-def _build_rating_settings(data: Dict[str, Any]) -> RatingSettings:
+def _build_rating_settings(data: dict[str, Any]) -> RatingSettings:
     default_rating = DEFAULT_SETTINGS["rating"]
     icmp_points = int(data.get("icmp_points", default_rating["icmp_points"]))
     combo_rules = _build_combo_rules(data.get("combo_rules", []))
@@ -341,8 +346,12 @@ def _build_rating_settings(data: Dict[str, Any]) -> RatingSettings:
     if not os_weights:
         os_weights = {str(k): int(v) for k, v in default_rating["os_weights"].items()}
     thresholds = data.get("priority_thresholds", {}) or {}
-    high_threshold = int(thresholds.get("high", default_rating["priority_thresholds"]["high"]))
-    medium_threshold = int(thresholds.get("medium", default_rating["priority_thresholds"]["medium"]))
+    high_threshold = int(
+        thresholds.get("high", default_rating["priority_thresholds"]["high"])
+    )
+    medium_threshold = int(
+        thresholds.get("medium", default_rating["priority_thresholds"]["medium"])
+    )
     return RatingSettings(
         icmp_points=icmp_points,
         port_weights=port_weights,
@@ -355,14 +364,14 @@ def _build_rating_settings(data: Dict[str, Any]) -> RatingSettings:
     )
 
 
-def _build_ui_settings(data: Dict[str, Any]) -> UiSettings:
+def _build_ui_settings(data: dict[str, Any]) -> UiSettings:
     colors = data.get("priority_colors") or {}
     if not colors:
         colors = DEFAULT_SETTINGS["ui"]["priority_colors"]
     return UiSettings(priority_colors={str(k): str(v) for k, v in colors.items()})
 
 
-def _build_safe_scan_settings(data: Dict[str, Any]) -> SafeScanSettings:
+def _build_safe_scan_settings(data: dict[str, Any]) -> SafeScanSettings:
     defaults = DEFAULT_SETTINGS["safe_scan"]
     timeout_seconds = int(data.get("timeout_seconds", defaults["timeout_seconds"]))
     if timeout_seconds <= 0:
@@ -371,10 +380,16 @@ def _build_safe_scan_settings(data: Dict[str, Any]) -> SafeScanSettings:
     if max_parallel <= 0:
         max_parallel = 1
     return SafeScanSettings(
-        default_duration_seconds=float(data.get("default_duration_seconds", defaults["default_duration_seconds"])),
+        default_duration_seconds=float(
+            data.get("default_duration_seconds", defaults["default_duration_seconds"])
+        ),
         history_limit=int(data.get("history_limit", defaults["history_limit"])),
-        progress_update_ms=int(data.get("progress_update_ms", defaults["progress_update_ms"])),
-        progress_visibility_ms=int(data.get("progress_visibility_ms", defaults["progress_visibility_ms"])),
+        progress_update_ms=int(
+            data.get("progress_update_ms", defaults["progress_update_ms"])
+        ),
+        progress_visibility_ms=int(
+            data.get("progress_visibility_ms", defaults["progress_visibility_ms"])
+        ),
         timeout_seconds=timeout_seconds,
         max_parallel=max_parallel,
     )
@@ -394,7 +409,9 @@ def main() -> None:  # pragma: no cover - CLI helper
         print(f"Wrote default configuration to {target}")
         return
     settings = load_settings()
-    print(f"Loaded configuration from {Path.cwd() / CONFIG_FILENAME}\nVersion: {settings.raw.get('version', 'n/a')}")
+    config_path = Path.cwd() / CONFIG_FILENAME
+    version = settings.raw.get("version", "n/a")
+    print(f"Loaded configuration from {config_path}\nVersion: {version}")
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI

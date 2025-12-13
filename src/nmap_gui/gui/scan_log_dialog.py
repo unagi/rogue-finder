@@ -1,16 +1,16 @@
 """Modeless dialog that renders streaming stdout/stderr for discovery scans."""
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
-from typing import Dict, List, Sequence
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication,
-    QFileDialog,
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QHBoxLayout,
     QLabel,
     QMessageBox,
@@ -29,7 +29,7 @@ class ScanLogDialog(QDialog):
     def __init__(self, parent, language: str):
         super().__init__(parent)
         self._language = language
-        self._logs: Dict[str, List[str]] = {}
+        self._logs: dict[str, list[str]] = {}
         self._current_target: str | None = None
         self.setWindowTitle(translate("log_dialog_title", language))
         self.setModal(False)
@@ -86,8 +86,9 @@ class ScanLogDialog(QDialog):
             self._scroll_to_end()
         self._copy_button.setEnabled(True)
         self._save_button.setEnabled(True)
+        phase_label = self._phase_label(event.phase)
         self._status_label.setText(
-            self._t("log_dialog_running").format(target=target, phase=self._phase_label(event.phase))
+            self._t("log_dialog_running").format(target=target, phase=phase_label)
         )
 
     def mark_scan_finished(self) -> None:
@@ -161,7 +162,9 @@ class ScanLogDialog(QDialog):
             return
         target = self._current_target or "session"
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        filename = f"scan-log_{slugify_filename_component(target, fallback='target')}_{timestamp}.txt"
+        filename = (
+            f"scan-log_{slugify_filename_component(target, fallback='target')}_{timestamp}.txt"
+        )
         path, _ = QFileDialog.getSaveFileName(
             self,
             self._t("log_dialog_save_dialog"),

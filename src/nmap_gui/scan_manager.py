@@ -14,11 +14,12 @@ try:  # Python embedded in PyInstaller on Windows may lack BrokenProcessPool
 except ImportError:  # pragma: no cover - fallback for runtimes missing the class
     class BrokenProcessPool(RuntimeError):  # type: ignore[override]
         """Compatibility placeholder so exception handling still works."""
+from collections.abc import Sequence
 from multiprocessing.connection import Connection
-from typing import Dict, Optional, Sequence
 
 from PySide6.QtCore import QObject, QThread, Signal, Slot
 
+from .cancel_token import PipeCancelToken, create_pipe_cancel_token
 from .config import AppSettings, get_settings
 from .error_codes import (
     ERROR_SCAN_CRASHED,
@@ -27,7 +28,6 @@ from .error_codes import (
 )
 from .models import ScanConfig, ScanLogEvent
 from .nmap_runner import run_full_scan, run_safe_script_scan
-from .cancel_token import PipeCancelToken, create_pipe_cancel_token
 
 
 def _send_log_event(connection: Connection | None, event: ScanLogEvent) -> None:
@@ -55,8 +55,8 @@ class ScanWorker(QObject):
         self._config = config
         self._settings = settings or get_settings()
         self._mp_context = mp.get_context("spawn")
-        self._cancel_tx: Optional[Connection] = None
-        self._cancel_token: Optional[PipeCancelToken] = None
+        self._cancel_tx: Connection | None = None
+        self._cancel_token: PipeCancelToken | None = None
         self._init_cancel_token()
         self._use_threads = _should_use_threads()
         self._log_receivers: list[Connection] = []
@@ -136,10 +136,10 @@ class ScanWorker(QObject):
 
     def _executor_config(
         self, total: int
-    ) -> tuple[type[ThreadPoolExecutor] | type[ProcessPoolExecutor], Dict[str, object]]:
+    ) -> tuple[type[ThreadPoolExecutor] | type[ProcessPoolExecutor], dict[str, object]]:
         configured_max = self._config.max_parallel or (os.cpu_count() or 1)
         max_workers = max(1, min(total, configured_max))
-        executor_kwargs: Dict[str, object] = {"max_workers": max_workers}
+        executor_kwargs: dict[str, object] = {"max_workers": max_workers}
         executor_cls = ThreadPoolExecutor if self._use_threads else ProcessPoolExecutor
         if not self._use_threads:
             executor_kwargs["mp_context"] = self._mp_context
@@ -149,9 +149,9 @@ class ScanWorker(QObject):
         self,
         executor,
         targets: Sequence[str],
-    ) -> tuple[Dict[object, str], Dict[object, Connection]]:
-        futures: Dict[object, str] = {}
-        log_channels: Dict[object, Connection] = {}
+    ) -> tuple[dict[object, str], dict[object, Connection]]:
+        futures: dict[object, str] = {}
+        log_channels: dict[object, Connection] = {}
         for target in targets:
             connection = self._create_log_channel()
             log_callback = partial(_send_log_event, connection) if connection else None
@@ -179,8 +179,8 @@ class ScanWorker(QObject):
 
     def _consume_futures(
         self,
-        futures: Dict[object, str],
-        log_channels: Dict[object, Connection],
+        futures: dict[object, str],
+        log_channels: dict[object, Connection],
         total: int,
     ) -> None:
         for completed, future in enumerate(as_completed(futures), start=1):
@@ -201,7 +201,7 @@ class ScanWorker(QObject):
                     )
                 )
                 break
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 self.error.emit(build_error(ERROR_SCAN_CRASHED, detail=str(exc)))
             self.progress.emit(completed, total)
             if self._cancelled():
@@ -303,7 +303,7 @@ class SafeScriptWorker(QObject):
                 for completed, future in enumerate(as_completed(futures), start=1):
                     try:
                         report = future.result()
-                    except Exception as exc:  # noqa: BLE001
+                    except Exception as exc:
                         self.error.emit(exc)
                     else:
                         self.result_ready.emit(report)

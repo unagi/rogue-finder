@@ -5,7 +5,6 @@ import pytest
 from nmap_gui import nmap_runner
 from nmap_gui.models import ScanMode
 
-
 MAC_WITHOUT_ROOT = nmap_runner._is_macos() and not nmap_runner._has_root_privileges()
 EXPECTED_CIDR_HOSTS = 2
 
@@ -83,7 +82,7 @@ def test_run_nmap_raises_on_nonzero_exit(monkeypatch):
             self.stdout = io.StringIO("")
             self.stderr = io.StringIO("permission denied\n")
 
-        def wait(self, timeout=None):  # noqa: D401 - test helper
+        def wait(self, timeout=None):
             return self.returncode
 
         def kill(self):
@@ -91,7 +90,7 @@ def test_run_nmap_raises_on_nonzero_exit(monkeypatch):
 
     created = {"count": 0}
 
-    def fake_popen(*args, **kwargs):  # noqa: ANN001, ANN202 - pytest helper
+    def fake_popen(*args, **kwargs):
         created["count"] += 1
         return FakeProcess()
 
@@ -104,7 +103,7 @@ def test_run_nmap_raises_on_nonzero_exit(monkeypatch):
 
 
 def test_run_full_scan_converts_parse_errors_to_rf004(monkeypatch):
-    def fake_run_nmap(*args, **kwargs):  # noqa: ANN001, ANN202 - pytest helper
+    def fake_run_nmap(*args, **kwargs):
         return "this is not xml"
 
     monkeypatch.setattr(nmap_runner, "run_nmap", fake_run_nmap)
@@ -117,7 +116,7 @@ def test_run_full_scan_converts_parse_errors_to_rf004(monkeypatch):
 def test_run_full_scan_falls_back_to_tcp_connect_when_syn_requires_root(monkeypatch):
     calls = []
 
-    def fake_run_nmap(args, timeout=nmap_runner.DEFAULT_TIMEOUT, **kwargs):  # noqa: ANN001, ANN202 - helper
+    def fake_run_nmap(args, timeout=nmap_runner.DEFAULT_TIMEOUT, **kwargs):
         calls.append(args)
         if "-sS" in args:
             raise nmap_runner.NmapExecutionError(
@@ -185,7 +184,7 @@ def test_run_full_scan_returns_multiple_hosts_for_cidr(monkeypatch):
 
     responses = [icmp_xml, port_xml, os_xml]
 
-    def fake_run_nmap(*args, **kwargs):  # noqa: ANN001, ANN202 - pytest helper
+    def fake_run_nmap(*args, **kwargs):
         return responses.pop(0)
 
     monkeypatch.setattr(nmap_runner, "run_nmap", fake_run_nmap)

@@ -9,13 +9,12 @@ import shutil
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
-from threading import Thread
-from typing import Callable, Dict, List, Sequence, Set, Tuple
-
+from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
 from multiprocessing.synchronize import Event as MpEvent
+from threading import Thread
 
-from .config import AppSettings, DEFAULT_SETTINGS, get_settings
+from .config import DEFAULT_SETTINGS, AppSettings, get_settings
 from .error_codes import (
     ERROR_NMAP_FAILED,
     ERROR_NMAP_NOT_FOUND,
@@ -23,7 +22,7 @@ from .error_codes import (
     ERROR_SCAN_ABORTED,
     build_error,
 )
-from .models import ErrorRecord, HostScanResult, ScanLogEvent, ScanMode, SafeScanReport
+from .models import ErrorRecord, HostScanResult, SafeScanReport, ScanLogEvent, ScanMode
 from .rating import apply_rating
 
 LOGGER = logging.getLogger(__name__)
@@ -81,7 +80,7 @@ def run_nmap(
     log_phase: ScanMode | None = None,
 ) -> str:
     ensure_nmap_available()
-    process_args = list(args) + ["-oX", "-"]
+    process_args = [*args, "-oX", "-"]
     LOGGER.debug("Executing nmap: %s", " ".join(process_args))
     proc = subprocess.Popen(
         process_args,
@@ -94,8 +93,8 @@ def run_nmap(
         creationflags=_WINDOWS_CREATION_FLAGS,
     )
 
-    stdout_chunks: List[str] = []
-    stderr_chunks: List[str] = []
+    stdout_chunks: list[str] = []
+    stderr_chunks: list[str] = []
 
     def _pump_stream(stream, collector, stream_name: str) -> None:
         try:
@@ -163,10 +162,10 @@ def _extract_host_key(host_node: ET.Element, default: str) -> str:
     return default
 
 
-def parse_icmp_hosts(xml_text: str, default_target: str) -> Dict[str, bool]:
+def parse_icmp_hosts(xml_text: str, default_target: str) -> dict[str, bool]:
     """Return a mapping of host identifier -> ICMP reachability."""
 
-    hosts: Dict[str, bool] = {}
+    hosts: dict[str, bool] = {}
     root = ET.fromstring(xml_text)
     for host in root.findall("host"):
         state = host.find("status")
@@ -177,14 +176,14 @@ def parse_icmp_hosts(xml_text: str, default_target: str) -> Dict[str, bool]:
     return hosts
 
 
-def parse_open_ports_by_host(xml_text: str, default_target: str) -> Dict[str, List[int]]:
+def parse_open_ports_by_host(xml_text: str, default_target: str) -> dict[str, list[int]]:
     """Return a mapping of host identifier -> sorted list of open ports."""
 
     root = ET.fromstring(xml_text)
-    ports_by_host: Dict[str, List[int]] = {}
+    ports_by_host: dict[str, list[int]] = {}
     for host in root.findall("host"):
         key = _extract_host_key(host, default_target)
-        ports: List[int] = []
+        ports: list[int] = []
         for port in host.findall("ports/port"):
             state = port.find("state")
             if state is not None and state.attrib.get("state") == "open":
@@ -197,11 +196,11 @@ def parse_open_ports_by_host(xml_text: str, default_target: str) -> Dict[str, Li
 
 def parse_os_guesses_by_host(
     xml_text: str, default_target: str
-) -> Dict[str, Tuple[str, int | None]]:
+) -> dict[str, tuple[str, int | None]]:
     """Return a mapping of host identifier -> (guess, accuracy)."""
 
     root = ET.fromstring(xml_text)
-    guesses: Dict[str, Tuple[str, int | None]] = {}
+    guesses: dict[str, tuple[str, int | None]] = {}
     for host in root.findall("host"):
         key = _extract_host_key(host, default_target)
         os_element = host.find("os/osmatch")
@@ -217,14 +216,14 @@ def parse_os_guesses_by_host(
 
 def run_full_scan(
     target: str,
-    scan_modes: Set[ScanMode],
+    scan_modes: set[ScanMode],
     cancel_event: MpEvent | None = None,
     log_callback: Callable[[ScanLogEvent], None] | None = None,
     settings: AppSettings | None = None,
     custom_port_list: Sequence[int] | None = None,
     timeout_override: int | None = None,
     detail_label: str = "fast",
-) -> List[HostScanResult]:
+) -> list[HostScanResult]:
     runner = _FullScanRunner(
         target=target,
         scan_modes=scan_modes,
@@ -243,7 +242,7 @@ class _FullScanRunner:
         self,
         *,
         target: str,
-        scan_modes: Set[ScanMode],
+        scan_modes: set[ScanMode],
         cancel_event: MpEvent | None,
         log_callback: Callable[[ScanLogEvent], None] | None,
         settings: AppSettings | None,
@@ -261,12 +260,12 @@ class _FullScanRunner:
         self.custom_port_list = custom_port_list
         self.phase_timeout = timeout_override or self.scan_settings.default_timeout_seconds
         self.detail_label = detail_label
-        self.detail_timestamp = datetime.now(timezone.utc).isoformat()
-        self.errors: List[ErrorRecord] = []
-        self.host_results: Dict[str, HostScanResult] = {}
+        self.detail_timestamp = datetime.now(UTC).isoformat()
+        self.errors: list[ErrorRecord] = []
+        self.host_results: dict[str, HostScanResult] = {}
         self.mac_without_root = _is_macos() and not _has_root_privileges()
 
-    def run(self) -> List[HostScanResult]:
+    def run(self) -> list[HostScanResult]:
         try:
             if self._was_cancelled():
                 return self._handle_cancel()
@@ -301,10 +300,10 @@ class _FullScanRunner:
             self._ensure_host(host_key).is_alive = True
         return bool(alive_hosts)
 
-    def _icmp_args(self) -> List[str]:
+    def _icmp_args(self) -> list[str]:
         if self.mac_without_root:
             self._emit_log(
-                "macOS without root privileges detected – using TCP ping scan (-PA80,443).",
+                "macOS without root privileges detected - using TCP ping scan (-PA80,443).",
                 phase=ScanMode.ICMP,
             )
             return ["nmap", "-sn", "-PA80,443", self.target, "-T4"]
@@ -332,17 +331,17 @@ class _FullScanRunner:
             has_icmp_alive or ScanMode.ICMP not in self.scan_modes
         )
 
-    def _port_scan_args(self, port_list: str) -> List[str]:
+    def _port_scan_args(self, port_list: str) -> list[str]:
         args = ["nmap", "-sS", "-p", port_list, self.target, "-T4"]
         if self.mac_without_root:
             args[1] = "-sT"
             self._emit_log(
-                "macOS without root privileges detected – using TCP connect scan (-sT).",
+                "macOS without root privileges detected - using TCP connect scan (-sT).",
                 phase=ScanMode.PORTS,
             )
         return args
 
-    def _execute_port_scan(self, port_args: List[str], port_list: str) -> str:
+    def _execute_port_scan(self, port_args: list[str], port_list: str) -> str:
         try:
             return self._run_phase(port_args, ScanMode.PORTS)
         except NmapExecutionError as exc:
@@ -395,9 +394,9 @@ class _FullScanRunner:
             self.host_results[host_key] = HostScanResult(target=host_key)
         return self.host_results[host_key]
 
-    def _finalize(self) -> List[HostScanResult]:
+    def _finalize(self) -> list[HostScanResult]:
         if self.host_results:
-            rated: List[HostScanResult] = []
+            rated: list[HostScanResult] = []
             for item in self.host_results.values():
                 item.errors = list(self.errors)
                 item.detail_level = self.detail_label
@@ -423,7 +422,7 @@ class _FullScanRunner:
             return [apply_rating(empty_result, self.rating_settings)]
         return []
 
-    def _handle_cancel(self) -> List[HostScanResult]:
+    def _handle_cancel(self) -> list[HostScanResult]:
         if not any(err.code == ERROR_SCAN_ABORTED.code for err in self.errors):
             self.errors.append(build_error(ERROR_SCAN_ABORTED))
         return self._finalize()
@@ -456,15 +455,15 @@ def run_safe_script_scan(
     app_settings = settings or get_settings()
     safe_settings = app_settings.safe_scan
     effective_timeout = timeout if timeout is not None else safe_settings.timeout_seconds
-    started_at = datetime.now(timezone.utc)
+    started_at = datetime.now(UTC)
     base_args = ["nmap", "--noninteractive", "-sV", "--script", "safe", target, "-T4"]
     stdout = ""
     stderr = ""
     exit_code: int | None = None
-    errors: List[ErrorRecord] = []
+    errors: list[ErrorRecord] = []
     try:
         ensure_nmap_available()
-        process_args = base_args + ["-oN", "-"]
+        process_args = [*base_args, "-oN", "-"]
         LOGGER.debug("Executing safe script scan: %s", " ".join(process_args))
         proc = subprocess.run(
             process_args,
@@ -487,10 +486,10 @@ def run_safe_script_scan(
     except subprocess.TimeoutExpired as exc:
         timeout_value = exc.timeout if getattr(exc, "timeout", None) else effective_timeout
         errors.append(build_error(ERROR_NMAP_TIMEOUT, timeout=timeout_value))
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         errors.append(build_error(ERROR_NMAP_FAILED, detail=str(exc)))
 
-    finished_at = datetime.now(timezone.utc)
+    finished_at = datetime.now(UTC)
     return SafeScanReport(
         target=target,
         command=_format_cli_command(base_args),

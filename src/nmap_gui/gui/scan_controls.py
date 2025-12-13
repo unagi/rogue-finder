@@ -1,11 +1,18 @@
 """Scan controls panel helpers."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from enum import Enum, auto
-from typing import Callable
 
 from PySide6.QtCore import QEvent, Signal
-from PySide6.QtWidgets import QGridLayout, QGroupBox, QLabel, QPushButton, QPlainTextEdit, QSizePolicy
+from PySide6.QtWidgets import (
+    QGridLayout,
+    QGroupBox,
+    QLabel,
+    QPlainTextEdit,
+    QPushButton,
+    QSizePolicy,
+)
 
 Translator = Callable[[str], str]
 

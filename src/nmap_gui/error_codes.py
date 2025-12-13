@@ -62,12 +62,12 @@ ERROR_SCAN_CRASHED = ErrorDescriptor(
 )
 
 __all__ = [
-    "ErrorDescriptor",
-    "build_error",
-    "ERROR_SCAN_ABORTED",
+    "ERROR_NMAP_FAILED",
     "ERROR_NMAP_NOT_FOUND",
     "ERROR_NMAP_TIMEOUT",
-    "ERROR_NMAP_FAILED",
-    "ERROR_WORKER_POOL_FAILED",
+    "ERROR_SCAN_ABORTED",
     "ERROR_SCAN_CRASHED",
+    "ERROR_WORKER_POOL_FAILED",
+    "ErrorDescriptor",
+    "build_error",
 ]

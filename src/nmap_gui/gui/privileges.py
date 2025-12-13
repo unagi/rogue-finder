@@ -4,8 +4,8 @@ from __future__ import annotations
 import os
 import shlex
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Set
 
 from PySide6.QtWidgets import QMessageBox, QWidget
 
@@ -14,7 +14,7 @@ from ..models import ScanMode
 Translator = Callable[[str], str]
 
 
-def has_required_privileges(modes: Set[ScanMode]) -> bool:
+def has_required_privileges(modes: set[ScanMode]) -> bool:
     if ScanMode.OS not in modes:
         return True
     if os.name == "nt":

@@ -4,8 +4,8 @@ from __future__ import annotations
 import ipaddress
 import sys
 import time
+from collections.abc import Sequence
 from datetime import datetime
-from typing import Dict, List, Sequence, Set
 
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QIcon
@@ -25,12 +25,12 @@ from ..models import (
     ScanMode,
     sanitize_targets,
 )
-from .result_grid import ResultGrid
 from ..scan_manager import ScanManager
 from ..state_store import AppState
 from .config_editor import ConfigEditorDialog
 from .export_toolbar import ExportToolbar
 from .privileges import has_required_privileges, show_privileged_hint
+from .result_grid import ResultGrid
 from .result_store import ResultStore
 from .safe_scan_controller import SafeScanController
 from .safe_scan_report_viewer import SafeScanReportViewer
@@ -61,7 +61,7 @@ class MainWindow(QMainWindow):
         if app_icon is not None and not app_icon.isNull():
             self.setWindowIcon(app_icon)
         self.resize(1000, 700)
-        self._pending_scan_configs: List[ScanConfig] = []
+        self._pending_scan_configs: list[ScanConfig] = []
         self._active_scan_kind, self._current_scan_targets = None, []
         self._controls = ScanControlsPanel(self._t, self)
         self._connect_control_signals()
@@ -175,8 +175,8 @@ class MainWindow(QMainWindow):
 
     def _init_fast_eta_state(self) -> None:
         self._fast_eta: WorkBasedEstimator | None = None
-        self._fast_task_specs: Dict[str, TaskSpec] = {}
-        self._fast_completed_targets: Set[str] = set()
+        self._fast_task_specs: dict[str, TaskSpec] = {}
+        self._fast_completed_targets: set[str] = set()
         self._fast_total_work = 0.0
 
     def _prepare_fast_scan_state(self, targets: Sequence[str]) -> None:
@@ -187,8 +187,8 @@ class MainWindow(QMainWindow):
         self._fast_completed_targets = set()
         self._result_grid.configure_fast_progress(len(targets), total_work)
 
-    def _build_fast_task_specs(self, targets: Sequence[str]) -> tuple[Dict[str, TaskSpec], float]:
-        specs: Dict[str, TaskSpec] = {}
+    def _build_fast_task_specs(self, targets: Sequence[str]) -> tuple[dict[str, TaskSpec], float]:
+        specs: dict[str, TaskSpec] = {}
         total_work = 0.0
         for target in targets:
             work = float(max(self._estimate_hosts_for_target(target), 1))
@@ -381,7 +381,11 @@ class MainWindow(QMainWindow):
         self._result_grid.reset_progress(total)
 
     def _on_progress(self, done: int, total: int) -> None:
-        if self._active_scan_kind == "fast" and self._result_grid.handle_fast_progress_update(done, total):
+        fast_handled = (
+            self._active_scan_kind == "fast"
+            and self._result_grid.handle_fast_progress_update(done, total)
+        )
+        if fast_handled:
             return
         self._result_grid.set_progress(done, total)
         if self._active_scan_kind == "advanced":
@@ -438,12 +442,9 @@ class MainWindow(QMainWindow):
         self._controls.set_state(state)
 
     def _refresh_action_buttons(self) -> None:
-        advanced_allowed = (
-            not self._scan_active and not self._safe_scan_controller.is_active() and self._result_grid.has_advanced_selection()
-        )
-        safety_allowed = (
-            not self._scan_active and not self._safe_scan_controller.is_active() and self._result_grid.has_safety_selection()
-        )
+        controls_blocked = self._scan_active or self._safe_scan_controller.is_active()
+        advanced_allowed = not controls_blocked and self._result_grid.has_advanced_selection()
+        safety_allowed = not controls_blocked and self._result_grid.has_safety_selection()
         self._result_grid.set_run_buttons_enabled(advanced=advanced_allowed, safety=safety_allowed)
         clear_allowed = not self._scan_active and not self._safe_scan_controller.is_active()
         self._controls.set_clear_enabled(clear_allowed)
@@ -540,7 +541,9 @@ class MainWindow(QMainWindow):
             return
         self._fast_completed_targets.add(target)
         remaining_specs = [
-            task for tid, task in self._fast_task_specs.items() if tid not in self._fast_completed_targets
+            task
+            for tid, task in self._fast_task_specs.items()
+            if tid not in self._fast_completed_targets
         ]
         estimate = self._fast_eta.update(
             now_ts=time.monotonic(),
@@ -568,7 +571,7 @@ class MainWindow(QMainWindow):
         self._result_grid.reset_fast_progress()
 
     def _build_advanced_config(self, targets: Sequence[str], *, include_os: bool) -> ScanConfig:
-        modes: Set[ScanMode] = {ScanMode.PORTS}
+        modes: set[ScanMode] = {ScanMode.PORTS}
         if include_os:
             modes.add(ScanMode.OS)
         return ScanConfig(
@@ -581,7 +584,7 @@ class MainWindow(QMainWindow):
         )
 
     def _format_eta_seconds(self, seconds: float) -> str:
-        total = max(int(round(seconds)), 0)
+        total = max(round(seconds), 0)
         mins, secs = divmod(total, 60)
         hours, mins = divmod(mins, 60)
         if hours:
@@ -589,10 +592,11 @@ class MainWindow(QMainWindow):
         return f"{mins:02d}:{secs:02d}"
 
     def _on_error(self, payload) -> None:
-        if isinstance(payload, ErrorRecord):
-            message = format_error_record(payload, self._language)
-        else:
-            message = str(payload)
+        message = (
+            format_error_record(payload, self._language)
+            if isinstance(payload, ErrorRecord)
+            else str(payload)
+        )
         QMessageBox.critical(self, self._t("scan_error_title"), message)
         self.statusBar().showMessage(message)
         self._summary_has_error = True

@@ -1,9 +1,9 @@
 """Summary and advisory panel widgets."""
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
-from PySide6.QtWidgets import QLabel, QGroupBox, QVBoxLayout
+from PySide6.QtWidgets import QGroupBox, QLabel, QVBoxLayout
 
 Translator = Callable[[str], str]
 

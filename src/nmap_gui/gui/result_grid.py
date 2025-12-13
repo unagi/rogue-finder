@@ -1,28 +1,26 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Callable, Dict, Iterable, Sequence, Set
-
 import time
+from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass
 
-from PySide6.QtCore import QObject, Qt, Signal, QTimer
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
+    QProgressBar,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
-    QHeaderView,
-    QProgressBar,
     QWidget,
 )
 
 from ..i18n import format_error_list
 from ..models import HostScanResult
-
 
 TARGET_COLUMN_INDEX = 0
 ALIVE_COLUMN_INDEX = 1
@@ -71,8 +69,8 @@ class ResultGrid(QObject):
         *,
         translator: Callable[[str], str],
         language: str,
-        priority_labels: Dict[str, str],
-        priority_colors: Dict[str, str],
+        priority_labels: dict[str, str],
+        priority_colors: dict[str, str],
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -84,11 +82,11 @@ class ResultGrid(QObject):
         self._run_advanced_button: QPushButton | None = None
         self._run_advanced_with_os_button: QPushButton | None = None
         self._run_safety_button: QPushButton | None = None
-        self._advanced_selection: Set[str] = set()
-        self._safety_selection: Set[str] = set()
-        self._result_index: Dict[str, int] = {}
-        self._row_checkboxes: Dict[str, Dict[str, QCheckBox]] = {}
-        self._diagnostics_status: Dict[str, str] = {}
+        self._advanced_selection: set[str] = set()
+        self._safety_selection: set[str] = set()
+        self._result_index: dict[str, int] = {}
+        self._row_checkboxes: dict[str, dict[str, QCheckBox]] = {}
+        self._diagnostics_status: dict[str, str] = {}
         self._advanced_buttons_enabled = False
         self._os_button_allowed = True
         self._os_button_tooltip = ""
@@ -118,10 +116,10 @@ class ResultGrid(QObject):
         if emit_signal:
             self.selectionChanged.emit()
 
-    def advanced_targets(self) -> Set[str]:
+    def advanced_targets(self) -> set[str]:
         return set(self._advanced_selection)
 
-    def safety_targets(self) -> Set[str]:
+    def safety_targets(self) -> set[str]:
         return set(self._safety_selection)
 
     def has_advanced_selection(self) -> bool:
@@ -198,7 +196,7 @@ class ResultGrid(QObject):
                 self._run_advanced_with_os_button.setToolTip("")
         self._update_os_button_state()
 
-    def update_priority_colors(self, colors: Dict[str, str]) -> None:
+    def update_priority_colors(self, colors: dict[str, str]) -> None:
         self._priority_color_overrides = dict(colors)
         self._refresh_row_styles()
 
@@ -348,7 +346,9 @@ class ResultGrid(QObject):
         bar.addWidget(self._run_advanced_button)
         self._run_advanced_with_os_button = QPushButton(self._t("run_advanced_with_os_button"))
         self._run_advanced_with_os_button.setEnabled(False)
-        self._run_advanced_with_os_button.clicked.connect(lambda: self.runAdvancedRequested.emit(True))
+        self._run_advanced_with_os_button.clicked.connect(
+            lambda: self.runAdvancedRequested.emit(True)
+        )
         bar.addWidget(self._run_advanced_with_os_button)
         bar.addSpacing(20)
         bar.addWidget(QLabel(self._t("safety_select_label")))
@@ -481,14 +481,22 @@ class ResultGrid(QObject):
         if result.os_accuracy is not None:
             os_text = f"{os_text} ({result.os_accuracy}%)"
         self._table.setItem(row, OS_COLUMN_INDEX, self._make_item(os_text, Qt.AlignLeft))
-        self._table.setItem(row, SCORE_COLUMN_INDEX, self._make_item(str(result.score), Qt.AlignRight))
+        self._table.setItem(
+            row,
+            SCORE_COLUMN_INDEX,
+            self._make_item(str(result.score), Qt.AlignRight),
+        )
         display_priority = self._priority_labels.get(result.priority, result.priority)
         priority_item = self._make_item(display_priority, Qt.AlignCenter)
         self._table.setItem(row, PRIORITY_COLUMN_INDEX, priority_item)
         error_text = "\n".join(format_error_list(result.errors, self._language))
         self._table.setItem(row, ERROR_COLUMN_INDEX, self._make_item(error_text, Qt.AlignLeft))
         diag_label = self._diagnostics_status_label(result.diagnostics_status)
-        self._table.setItem(row, DIAGNOSTICS_COLUMN_INDEX, self._make_item(diag_label, Qt.AlignCenter))
+        self._table.setItem(
+            row,
+            DIAGNOSTICS_COLUMN_INDEX,
+            self._make_item(diag_label, Qt.AlignCenter),
+        )
         self._diagnostics_status[result.target] = result.diagnostics_status
         self._apply_row_style(row, result.priority)
 
@@ -498,7 +506,11 @@ class ResultGrid(QObject):
         advanced_cb.stateChanged.connect(
             lambda state, t=target: self._on_row_checkbox_changed("advanced", t, state)
         )
-        self._table.setCellWidget(row, ADVANCED_COLUMN_INDEX, self._wrap_checkbox_widget(advanced_cb))
+        self._table.setCellWidget(
+            row,
+            ADVANCED_COLUMN_INDEX,
+            self._wrap_checkbox_widget(advanced_cb),
+        )
 
         safety_cb = QCheckBox()
         safety_cb.setChecked(target in self._safety_selection)
@@ -552,8 +564,16 @@ class ResultGrid(QObject):
 
     def _sync_select_all_checkboxes(self) -> None:
         total_rows = len(self._row_checkboxes)
-        self._set_select_all_state(self._advanced_select_all_checkbox, len(self._advanced_selection), total_rows)
-        self._set_select_all_state(self._safety_select_all_checkbox, len(self._safety_selection), total_rows)
+        self._set_select_all_state(
+            self._advanced_select_all_checkbox,
+            len(self._advanced_selection),
+            total_rows,
+        )
+        self._set_select_all_state(
+            self._safety_select_all_checkbox,
+            len(self._safety_selection),
+            total_rows,
+        )
 
     def _set_select_all_state(self, checkbox: QCheckBox, selected: int, total: int) -> None:
         checkbox.blockSignals(True)

@@ -1,16 +1,16 @@
 """Minimal translation helpers for GUI text."""
 from __future__ import annotations
 
-from typing import Dict, Iterable, List
+from collections.abc import Iterable
 
 from PySide6.QtCore import QLocale
 
 from .models import ErrorRecord
 
-Translations = Dict[str, str]
+Translations = dict[str, str]
 
 
-_TRANSLATIONS: Dict[str, Translations] = {
+_TRANSLATIONS: dict[str, Translations] = {
     "en": {
         "error_action_label": "Action",
         "window_title": "Nmap Discovery & Rating",
@@ -119,8 +119,8 @@ _TRANSLATIONS: Dict[str, Translations] = {
         "safe_scan_error_title": "Diagnostic error",
         "safe_scan_error_body": "Safe script run failed: {message}",
         "safe_scan_progress_idle": "Safe diagnostics idle",
-        "safe_scan_progress_running": "Safe diagnostics running – ETA {eta} (session avg {avg}s)",
-        "safe_scan_progress_running_multi": "Diagnostics running – {done}/{total} hosts (ETA {eta})",
+        "safe_scan_progress_running": "Safe diagnostics running - ETA {eta} (session avg {avg}s)",
+        "safe_scan_progress_running_multi": "Diagnostics running - {done}/{total} hosts (ETA {eta})",
         "safe_scan_progress_complete": "Safe diagnostics completed in {seconds}s",
         "safe_scan_progress_complete_multi": "Diagnostics completed for {total} hosts in {seconds}s",
         "safe_scan_progress_finished": "Safe diagnostics completed",
@@ -246,8 +246,8 @@ _TRANSLATIONS: Dict[str, Translations] = {
         "missing_modes_body": "少なくとも1つのスキャンモードを選択してください",
         "no_results_title": "結果なし",
         "no_results_body": "スキャン結果がありません",
-        "clear_results_title": "結果をクリアしますか？",
-        "clear_results_body": "既存のディスカバリ結果を削除します。よろしいですか？",
+        "clear_results_title": "結果をクリアしますか?",
+        "clear_results_body": "既存のディスカバリ結果を削除します。よろしいですか?",
         "clear_blocked_title": "クリアできません",
         "clear_blocked_body": "スキャンまたは診断が進行中のため、完了後にクリアしてください。",
         "summary_title": "結果サマリ",
@@ -322,7 +322,7 @@ _TRANSLATIONS: Dict[str, Translations] = {
         "safe_scan_error_body": "安全診断の実行に失敗しました: {message}",
         "safe_scan_progress_idle": "安全診断は待機中です",
         "safe_scan_progress_running": "安全診断を実行中 (推定残り {eta} / セッション平均 {avg} 秒)",
-        "safe_scan_progress_running_multi": "安全診断を実行中 – {done}/{total} (推定残り {eta})",
+        "safe_scan_progress_running_multi": "安全診断を実行中 - {done}/{total} (推定残り {eta})",
         "safe_scan_progress_complete": "安全診断が {seconds} 秒で完了しました",
         "safe_scan_progress_complete_multi": "{total} ホストの診断が {seconds} 秒で完了しました",
         "safe_scan_progress_finished": "安全診断が完了しました",
@@ -378,14 +378,14 @@ _TRANSLATIONS: Dict[str, Translations] = {
         "config_editor_close_button": "閉じる",
         "config_editor_status_loaded": "{path} から設定を読み込みました",
         "config_editor_status_saved": "{path} へ設定を保存しました",
-        "config_editor_status_applied": "設定を更新しました（このセッションに反映されます）。",
+        "config_editor_status_applied": "設定を更新しました(このセッションに反映されます)。",
         "config_editor_yaml_error_title": "YAML エラー",
         "config_editor_yaml_error_body": "設定を解析できません:\n{error}",
         "config_editor_validation_error": "YAML の最上位はマッピング形式である必要があります。",
         "config_editor_save_failed_title": "保存に失敗しました",
         "config_editor_save_failed_body": "設定ファイルを書き込めません:\n{error}",
-        "config_editor_unsaved_title": "変更を破棄しますか？",
-        "config_editor_unsaved_body": "未保存の変更があります。保存せず閉じますか？",
+        "config_editor_unsaved_title": "変更を破棄しますか?",
+        "config_editor_unsaved_body": "未保存の変更があります。保存せず閉じますか?",
         "config_editor_blocked_title": "設定を編集できません",
         "config_editor_blocked_body": "スキャンまたは診断の実行が完了するまで設定を編集できません。",
         "error.scan_aborted.message": "スキャンが完了する前に中断されました。",
@@ -401,10 +401,13 @@ _TRANSLATIONS: Dict[str, Translations] = {
         "error.scan_crashed.message": "スキャン実行で障害が発生しました: {detail}。",
         "error.scan_crashed.action": "ログとターゲットを確認し、再度スキャンしてください。",
         "storage_warning_title": "保存エラー",
-        "storage_warning_body": "設定またはステートファイルにアクセスできません。保存せずに続行するか終了するか選択してください。",
+        "storage_warning_body": (
+            "設定またはステートファイルにアクセスできません。保存せずに続行するか"
+            "終了するか選択してください。"
+        ),
         "storage_warning_continue": "続行",
         "storage_warning_exit": "終了",
-        "storage_warning_line": "{scope}（{action}）: {path}\n{detail}",
+        "storage_warning_line": "{scope}({action}): {path}\n{detail}",
         "storage_scope_config": "設定",
         "storage_scope_state": "ステート",
         "storage_action_write": "書き込み",
@@ -437,7 +440,7 @@ def translate(key: str, lang: str | None = None) -> str:
     return _TRANSLATIONS[DEFAULT_LANGUAGE].get(key, key)
 
 
-def _format_template(template: str, context: Dict[str, str]) -> str:
+def _format_template(template: str, context: dict[str, str]) -> str:
     try:
         return template.format(**context)
     except KeyError:
@@ -454,5 +457,5 @@ def format_error_record(record: ErrorRecord, lang: str | None = None) -> str:
     return f"[{record.code}] {message} ({action_label}: {action})"
 
 
-def format_error_list(records: Iterable[ErrorRecord], lang: str | None = None) -> List[str]:
+def format_error_list(records: Iterable[ErrorRecord], lang: str | None = None) -> list[str]:
     return [format_error_record(record, lang) for record in records]

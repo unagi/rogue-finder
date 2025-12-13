@@ -1,8 +1,6 @@
 """Shared helpers for formatting SafeScanReport content."""
 from __future__ import annotations
 
-from typing import List
-
 from ..i18n import format_error_record, translate
 from ..models import SafeScanReport
 from ..utils import slugify_filename_component
@@ -15,18 +13,23 @@ def build_status_text(report: SafeScanReport, language: str) -> str:
 
 
 def build_report_text(report: SafeScanReport, language: str) -> str:
-    lines: List[str] = []
+    lines: list[str] = []
     lines.append(f"{_label('safe_scan_label_target', language)}: {report.target}")
     lines.append(f"{_label('safe_scan_label_command', language)}: {report.command}")
+    started_label = _label("safe_scan_label_started", language)
+    finished_label = _label("safe_scan_label_finished", language)
+    timestamp_format = "%Y-%m-%d %H:%M:%S %Z"
     lines.append(
-        f"{_label('safe_scan_label_started', language)}: {report.started_at.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}"
+        f"{started_label}: {report.started_at.astimezone().strftime(timestamp_format)}"
     )
     lines.append(
-        f"{_label('safe_scan_label_finished', language)}: {report.finished_at.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}"
+        f"{finished_label}: {report.finished_at.astimezone().strftime(timestamp_format)}"
     )
     lines.append(f"{_label('safe_scan_label_duration', language)}: {report.duration_seconds:.1f}s")
     exit_code = (
-        str(report.exit_code) if report.exit_code is not None else _label("safe_scan_label_none", language)
+        str(report.exit_code)
+        if report.exit_code is not None
+        else _label("safe_scan_label_none", language)
     )
     lines.append(f"{_label('safe_scan_label_exit_code', language)}: {exit_code}")
     lines.append(f"{_label('safe_scan_label_errors', language)}: ")

@@ -1,6 +1,5 @@
 from nmap_gui.utils import slugify_filename_component
 
-
 MAX_SLUG_LENGTH = 80
 
 

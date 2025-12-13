@@ -1,8 +1,8 @@
 """Rating engine implementation."""
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import replace
-from typing import Dict, Iterable
 
 from .config import RatingSettings, get_settings
 from .models import HostScanResult
@@ -29,7 +29,7 @@ def apply_rating(
 
     rating_settings = settings or get_settings().rating
 
-    breakdown: Dict[str, int] = {}
+    breakdown: dict[str, int] = {}
     score = 0
     score += _score_icmp(result, rating_settings, breakdown)
     score += _score_ports(result.open_ports, rating_settings, breakdown)
@@ -40,7 +40,7 @@ def apply_rating(
     return replace(result, score=score, priority=priority, score_breakdown=breakdown)
 
 
-def _score_icmp(result: HostScanResult, settings: RatingSettings, breakdown: Dict[str, int]) -> int:
+def _score_icmp(result: HostScanResult, settings: RatingSettings, breakdown: dict[str, int]) -> int:
     if not result.is_alive:
         return 0
     breakdown["icmp"] = settings.icmp_points
@@ -50,7 +50,7 @@ def _score_icmp(result: HostScanResult, settings: RatingSettings, breakdown: Dic
 def _score_ports(
     open_ports: Iterable[int],
     settings: RatingSettings,
-    breakdown: Dict[str, int],
+    breakdown: dict[str, int],
 ) -> int:
     score = 0
     high_port_bonus_port = settings.high_port_bonus_port
@@ -68,7 +68,7 @@ def _score_ports(
     return score
 
 
-def _score_os(os_guess: str, settings: RatingSettings, breakdown: Dict[str, int]) -> int:
+def _score_os(os_guess: str, settings: RatingSettings, breakdown: dict[str, int]) -> int:
     os_class = classify_os_guess(os_guess)
     os_points = settings.os_weights.get(os_class, 1)
     breakdown[f"os:{os_class}"] = os_points
@@ -78,7 +78,7 @@ def _score_os(os_guess: str, settings: RatingSettings, breakdown: Dict[str, int]
 def _score_combos(
     open_ports: Iterable[int],
     settings: RatingSettings,
-    breakdown: Dict[str, int],
+    breakdown: dict[str, int],
 ) -> int:
     open_port_set = set(open_ports)
     score = 0

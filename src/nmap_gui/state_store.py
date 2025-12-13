@@ -7,11 +7,9 @@ import pickle
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Set
 
 from .models import HostScanResult
 from .storage_warnings import record_storage_warning
-
 
 LOGGER = logging.getLogger(__name__)
 
@@ -29,9 +27,9 @@ class AppState:
     ports_enabled: bool = True
     os_enabled: bool = True
     window_geometry: bytes | None = None
-    results: List[HostScanResult] = field(default_factory=list)
-    advanced_selected: Set[str] = field(default_factory=set)
-    safety_selected: Set[str] = field(default_factory=set)
+    results: list[HostScanResult] = field(default_factory=list)
+    advanced_selected: set[str] = field(default_factory=set)
+    safety_selected: set[str] = field(default_factory=set)
 
 
 def load_state(path: Path | None = None) -> AppState | None:
@@ -51,7 +49,7 @@ def load_state(path: Path | None = None) -> AppState | None:
         return None
     if getattr(state, "version", None) != CURRENT_STATE_VERSION:
         LOGGER.info(
-            "State version mismatch (found=%s expected=%s) – discarding",
+            "State version mismatch (found=%s expected=%s) - discarding",
             getattr(state, "version", None),
             CURRENT_STATE_VERSION,
         )
