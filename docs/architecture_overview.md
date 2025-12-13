@@ -40,7 +40,7 @@ All widgets communicate via Qt signals/slots so the GUI thread stays responsive 
 
 - PyInstaller executes `main.py` as a script, so modules expose both relative (`from . import ...`) and absolute (`from nmap_gui import ...`) imports to avoid “attempted relative import with no known parent package” errors.
 - Multiprocessing uses `spawn` everywhere to align with Windows and macOS requirements. Remember to guard entry points with `if __name__ == "__main__": multiprocessing.freeze_support()`.
-- Release artifacts include the English/Japanese manuals (copied in `.github/workflows/pyinstaller.yml`) so operators always have the latest usage notes.
+- Release artifacts include the English/Japanese manuals (copied in `.github/workflows/release.yml`) so operators always have the latest usage notes.
 
 ## Where to Start
 

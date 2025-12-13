@@ -3,7 +3,7 @@
 ## Purpose & Scope
 - Desktop utility built with PySide6 that orchestrates lightweight Nmap discovery jobs and ranks targets so analysts can decide where to spend commercial scanner time.
 - Nmap is never bundled. The local `nmap` binary must exist on `PATH`; failures manifest as `NmapNotInstalledError` from `nmap_runner.ensure_nmap_available()`.
-- The GUI is intended to stay portable (Windows/macOS/Linux) and drive PyInstaller packaging via `.github/workflows/pyinstaller.yml`.
+- The GUI is intended to stay portable (Windows/macOS/Linux) and drive PyInstaller packaging via `.github/workflows/release.yml`.
 
 ## Runtime Architecture
 - Entry point is `python -m nmap_gui.main` (or `src/nmap_gui/main.py`). It wires an `argparse --debug` flag, initializes `QApplication`, and shows `MainWindow`.
@@ -29,10 +29,11 @@
   1. Install Python 3.11+ and `uv` (required because Poe tasks call `uv run`). Optional: `uv tool install poethepoet && uv tool update-shell` puts the `poe` shim on PATH even outside a venv.
   2. `uv venv && source .venv/bin/activate` (or preferred venv method).
   3. `uv pip install -r requirements-dev.txt` to get PySide6, pytest, pytest-spec, poethepoet, etc.
-  4. Run the suite with `poe test` (this now shells out to `uv run pytest --spec`). Tests live under `tests/` and already cover `models.sanitize_targets` and rating heuristics.
+  4. Run the suite with `poe test` (wraps `coverage run -m pytest --spec`, producing XML + HTML reports). Tests live under `tests/` and already cover `models.sanitize_targets` and rating heuristics.
   5. Run `poe lint` (backs `ruff check src tests`) before committing to keep packaging imports and style consistent.
 - Pull requests automatically run `poe lint` and `poe test` via `.github/workflows/ci.yml`. Keep those tasks green before requesting review.
-- When packaging, rely on `.github/workflows/pyinstaller.yml` (“Release Builds”)—pushes to `main` keep Windows artifacts fresh, and annotated tags trigger both Windows + macOS builds, release uploads, and the automated changelog PR step.
+- When packaging, rely on `.github/workflows/release.yml` (“Release Builds”)—pushes to `main` keep Windows artifacts fresh, and annotated tags trigger both Windows + macOS builds, release uploads, coverage-to-Pages, and the automated changelog PR step.
+- When editing any GitHub Actions workflow, pin every `uses:` reference to a full-length commit SHA. Pick the desired release tag (usually “latest patch within the in-use major”) with `gh release list --repo OWNER/REPO`, then resolve its commit via `gh api repos/OWNER/REPO/git/refs/tags/<tag>` (or `/heads/<branch>` when an action only ships branches). Paste the SHA plus a trailing comment like `# actions/checkout@v4.3.1` so future upgrades know which tag was locked.
 - Avoid hand-editing the changelog; regenerate locally via `git cliff -c cliff.toml -o CHANGELOG.md` if you need to preview.
 
 ## Development Mindset
