@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The file is regenerated
 
 ### Documentation
 - docs: update changelog for v0.2.1 (2a79ad2)
+- docs: update changelog for v0.2.2 (cb941f0)
+
+
+
+### Fixes
+- Fix coverage pipeline dependencies (4184069)
 
 
 
