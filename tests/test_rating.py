@@ -1,9 +1,13 @@
 """Unit tests for the rating engine."""
 from __future__ import annotations
 
-from nmap_gui.config import DEFAULT_SETTINGS
+from dataclasses import replace
+
+import pytest
+
+from nmap_gui.config import DEFAULT_SETTINGS, ComboRule, get_settings
 from nmap_gui.models import HostScanResult
-from nmap_gui.rating import apply_rating
+from nmap_gui.rating import apply_rating, classify_os_guess
 
 _RATING_DEFAULTS = DEFAULT_SETTINGS["rating"]
 ICMP_POINTS = _RATING_DEFAULTS["icmp_points"]
@@ -77,3 +81,80 @@ def test_legacy_linux_detection_adds_correct_points() -> None:
 
     assert rated.score_breakdown["os:old linux"] == LEGACY_LINUX_POINTS
     assert rated.priority == "Low"
+
+
+@pytest.mark.parametrize(
+    ("guess", "expected"),
+    [
+        ("Windows 11 Pro", "windows"),
+        ("SOHO router appliance", "soho"),
+        ("Ubuntu Server 22 LTS", "server"),
+        ("Linux 2.6.32 host", "old linux"),
+        ("", "unknown"),
+    ],
+)
+def test_classify_os_guess_variants(guess: str, expected: str) -> None:
+    assert classify_os_guess(guess) == expected
+
+
+def test_combo_one_of_rule_requires_match() -> None:
+    result = HostScanResult(
+        target="198.51.100.8",
+        is_alive=True,
+        open_ports=[22],
+        os_guess="Windows",  # ensures icmp + os contribute
+    )
+
+    rated = apply_rating(result)
+
+    assert not any(key.startswith("combo 22+") for key in rated.score_breakdown)
+    expected_score = rated.score_breakdown["icmp"] + rated.score_breakdown["os:windows"]
+    assert rated.score == expected_score
+
+
+def test_combo_rules_handle_empty_and_one_of_only() -> None:
+    base_settings = get_settings().rating
+    custom_weights = dict(base_settings.port_weights)
+    weight_8443 = 2
+    combo_points = 4
+    custom_weights[8443] = weight_8443
+    custom_rules = (
+        ComboRule(required=(), one_of=(), points=10),  # ignored due to empty rule
+        ComboRule(required=(), one_of=(8443,), points=combo_points),
+    )
+    custom_settings = replace(
+        base_settings,
+        port_weights=custom_weights,
+        combo_rules=custom_rules,
+    )
+    result = HostScanResult(
+        target="198.51.100.9",
+        is_alive=False,
+        open_ports=[8443],
+        os_guess="mystery",
+    )
+
+    rated = apply_rating(result, settings=custom_settings)
+
+    combo_keys = {key for key in rated.score_breakdown if key.startswith("combo")}
+    assert combo_keys == {"combo 8443"}
+    assert rated.score_breakdown["combo 8443"] == combo_points
+    assert rated.score_breakdown["port 8443"] == weight_8443
+
+
+def test_priority_medium_band() -> None:
+    result = HostScanResult(
+        target="198.51.100.10",
+        is_alive=True,
+        open_ports=[3389],
+        os_guess="Linux",
+    )
+
+    rated = apply_rating(result)
+
+    assert rated.score == (
+        rated.score_breakdown["icmp"]
+        + rated.score_breakdown["port 3389"]
+        + rated.score_breakdown["os:server"]
+    )
+    assert rated.priority == "Medium"
