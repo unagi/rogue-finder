@@ -6,7 +6,7 @@ Rogue Finder is a cross-platform desktop utility that orchestrates lightweight N
 ## Capabilities Summary
 - Launch ICMP ping sweeps, targeted TCP SYN port scans, and OS fingerprint probes through the locally installed `nmap` binary.
 - Queue multiple targets (IPs, CIDR ranges, hostnames) and let Rogue Finder parallelize work without freezing the GUI.
-- Rate each host using the heuristics described in `nmap_gui_system_spec.md`, highlight High / Medium / Low priorities, and export structured CSV or JSON files with full score breakdowns and error logs.
+- Rate each host using the heuristics documented in README’s **Rating Model Overview** (implemented in `rating.py`), highlight High / Medium / Low priorities, and export structured CSV or JSON files with full score breakdowns and error logs.
 - Respect cancellation: you can stop the run at any time and partial results stay visible.
 
 ## Requirements & Installation

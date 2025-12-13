@@ -6,7 +6,7 @@ Rogue Finder はローカルにインストール済みの Nmap を用いて軽�
 ## できること
 - Nmap の ICMP (-sn -PE)、TCP SYN (-sS) ポート走査、OS フィンガープリント (-O -Pn) を GUI から連続実行。
 - IP / CIDR / ホスト名を複数入力し、GUI がフリーズしない形で並列スキャンを実現。
-- `nmap_gui_system_spec.md` に準拠したスコアリングで High / Medium / Low を色分け表示。
+- README の **Rating Model Overview** と `rating.py` で定義されたスコアリングルールに基づいて High / Medium / Low を色分け表示。
 - 結果を UTF-8 CSV / JSON に書き出し、スコアの内訳やエラーログも同梱。
 
 ## 前提条件と準備
