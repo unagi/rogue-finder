@@ -12,7 +12,7 @@
 - `ScanManager`/`ScanWorker` (`src/nmap_gui/scan_manager.py`) bridge the GUI thread to multiprocessing. Each scan runs in a `ProcessPoolExecutor` using the `spawn` context so Windows builds work. Cancellation toggles a shared event checked between phases.
 - `run_full_scan` (`src/nmap_gui/nmap_runner.py`) executes up to three phases (ICMP `-sn -PE`, targeted TCP SYN `-sS` against `PORT_SCAN_LIST`, OS fingerprint `-O -Pn`). On macOS without root privileges the runner automatically downgrades to TCP ping (`-PA`) and TCP connect (`-sT`) scans and skips OS fingerprinting to avoid raw-socket failures. Each phase parses XML output to populate `HostScanResult` and then hands it to the rating engine.
 - See `docs/scan_execution.md` for a mode-by-mode breakdown of how GUI actions map to concrete `nmap` commands (fast, advanced, and safe-script diagnostics).
-- Export buttons call `exporters.export_csv/json` to produce UTF-8 CSV/JSON files. Score breakdowns get JSON-dumped so analysts can trace how a score was formed.
+- Export buttons call `infrastructure.exporters.export_csv/json` to produce UTF-8 CSV/JSON files. Score breakdowns get JSON-dumped so analysts can trace how a score was formed, and there is no longer a compatibility wrapper under `nmap_gui.exporters`.
 
 ## Rating System Essentials
 - Rules mirror the inline summary in README (“Rating Model Overview”) and the constants defined in `rating.py`.
@@ -40,6 +40,8 @@
 - Avoid hand-editing the changelog; regenerate locally via `git cliff -c cliff.toml -o CHANGELOG.md` if you need to preview.
 - When adding or updating translations, pass every translation key as a literal string directly to the translation helpers (`self._t()`, `translate()`, `_label()`, etc.) so the automated catalog tests can statically verify that each key is referenced.
 - Translation identifiers follow one of two shapes: `section.label` for regular entries, or `category/subkey` for grouped strings. The slash form is reserved for `translate_grouped_key()` calls, and each identifier may contain at most one `/` segment separator.
+- Internal refactors do not require compatibility shims for old module paths (e.g., `nmap_gui.exporters`). Update in-repo imports/tests directly so the codebase reflects the new structure.
+- GUI wiring files that are impractical to unit test (e.g., `src/nmap_gui/gui/controller/main_window_controller.py` and everything under `gui/view`) stay excluded from coverage in both coverage.py and SonarCloud; update both configs together if the exclusions ever change.
 
 ## Development Mindset
 - Always validate external resources and migration guidance with Context7 first; only fall back to broader research if Context7 cannot resolve the issue.

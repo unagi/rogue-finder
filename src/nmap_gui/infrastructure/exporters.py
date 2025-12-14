@@ -6,8 +6,8 @@ import json
 from collections.abc import Iterable
 from pathlib import Path
 
-from .i18n import detect_language, format_error_list
-from .models import HostScanResult
+from ..i18n import detect_language, format_error_list
+from ..models import HostScanResult
 
 EXPORT_FIELDS = [
     "target",
