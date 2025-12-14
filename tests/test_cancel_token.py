@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import multiprocessing as mp
 
-from nmap_gui.infrastructure.process import PipeCancelToken, create_pipe_cancel_token
+from nmap_gui.process import PipeCancelToken, create_pipe_cancel_token
 
 
 def test_pipe_cancel_token_reflects_pipe_activity():

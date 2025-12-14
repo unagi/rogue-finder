@@ -6,7 +6,7 @@ This document summarizes the moving pieces inside Rogue Finder so contributors c
 
 1. **Entry point** – `python -m nmap_gui.main` (or `src/nmap_gui/main.py`) builds an `argparse` interface (`--debug` flag), instantiates `QApplication`, and shows `MainWindow`.
 2. **Main window** – `src/nmap_gui/gui/main_window.py` wires top-level widgets (target input, scan controls, results grid, safe diagnostics). It emits `ScanConfig` objects via Qt signals whenever the user starts discovery or diagnostics jobs.
-3. **Scan bridge** – `src/nmap_gui/scan_manager.py` listens to GUI events, translates them into background work items, and fan-outs execution to a `ProcessPoolExecutor` created with the `spawn` context (so Windows builds stay stable). Cancellation toggles a shared `multiprocessing.Event` from `infrastructure/process.py`.
+3. **Scan bridge** – `src/nmap_gui/scan_manager.py` listens to GUI events, translates them into background work items, and fan-outs execution to a `ProcessPoolExecutor` created with the `spawn` context (so Windows builds stay stable). Cancellation toggles a shared `multiprocessing.Event` from `process.py`.
 4. **Worker phase** – Each process executes `nmap_runner.run_full_scan`, which orchestrates ICMP discovery, targeted TCP SYN/TCP connect scans, optional OS fingerprinting, and safe-script jobs. XML outputs are parsed into `models.HostScanResult` objects, rated, and streamed back to the GUI thread.
 5. **Result presentation** – `result_grid.py` plus the supporting widgets in `src/nmap_gui/gui/` render the table, score breakdown, actions, and safe diagnostics dialogs. Export buttons call `exporters.export_csv/json`.
 

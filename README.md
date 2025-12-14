@@ -80,7 +80,7 @@ For the full component map see [`docs/architecture_overview.md`](docs/architectu
 
 - `src/nmap_gui/main.py` boots `QApplication`, parses CLI flags, and shows `MainWindow`.
 - Widgets under `src/nmap_gui/gui/` collect targets, display results, and emit `ScanConfig` objects without blocking the GUI thread.
-- `src/nmap_gui/scan_manager.py` and `infrastructure/process.py` fan-out jobs to a `ProcessPoolExecutor` using the `spawn` context so Windows/macOS builds behave consistently.
+- `src/nmap_gui/scan_manager.py` and `process.py` fan-out jobs to a `ProcessPoolExecutor` using the `spawn` context so Windows/macOS builds behave consistently.
 - `src/nmap_gui/nmap_runner.py` executes ICMP/port/OS/safe-script phases, adapts to privilege limitations, and parses XML into `models.HostScanResult`.
 - `rating.py`, `exporters.py`, and `job_eta.py` provide scoring, CSV/JSON output, and ETA calculations consumed by the GUI and tests.
 
