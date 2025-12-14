@@ -289,11 +289,11 @@ def test_scan_manager_prefers_privileged_backend_when_available(monkeypatch):
         def close(self):
             self.closed = True
 
-    monkeypatch.setattr(scan_manager, "PrivilegedRunnerBackend", DummyRunnerBackend)
+    monkeypatch.setattr(scan_manager, "_privileged_backend_available", lambda: True)
     monkeypatch.setattr(
         scan_manager,
-        "sys",
-        SimpleNamespace(platform="win32"),
+        "_create_privileged_backend",
+        lambda settings: DummyRunnerBackend(settings),
     )
 
     runtime = SimpleNamespace(windows_privileged_runner=True)
@@ -315,15 +315,20 @@ def test_scan_manager_prefers_privileged_backend_when_available(monkeypatch):
     manager.stop()
     assert manager.is_running() is False
 
+    monkeypatch.setattr(scan_manager, "_privileged_backend_available", lambda: False)
     new_runtime = SimpleNamespace(windows_privileged_runner=False)
     new_settings = SimpleNamespace(runtime=new_runtime)
     manager.update_settings(new_settings)
     assert isinstance(manager._backend, scan_manager.DirectScanBackend)  # type: ignore[attr-defined]
 
 
+def _dummy_settings():
+    return SimpleNamespace(runtime=SimpleNamespace(windows_privileged_runner=False))
+
+
 def test_scan_controller_propagates_callbacks():
     backend = _BackendStub()
-    manager = scan_manager.ScanManager(settings=SimpleNamespace(), backend=backend)
+    manager = scan_manager.ScanManager(settings=_dummy_settings(), backend=backend)
     controller = scan_controller.ScanController(manager=manager)
     controller.started = _fake_signal()
     controller.progress = _fake_signal()
@@ -373,7 +378,7 @@ def test_scan_controller_propagates_callbacks():
     assert backend.running is False
     assert controller.is_running() is False
 
-    sentinel_settings = SimpleNamespace()
+    sentinel_settings = _dummy_settings()
     controller.update_settings(sentinel_settings)
     assert backend.settings is sentinel_settings
 
@@ -511,7 +516,7 @@ def test_direct_safe_script_backend_forwards_signals(monkeypatch):
 
 def test_safe_script_controller_handles_unique_targets():
     backend = _SafeBackendStub()
-    manager = scan_manager.SafeScriptManager(settings=SimpleNamespace(), backend=backend)
+    manager = scan_manager.SafeScriptManager(settings=_dummy_settings(), backend=backend)
     controller = scan_controller.SafeScriptController(manager=manager)
     controller.started = _fake_signal()
     controller.progress = _fake_signal()

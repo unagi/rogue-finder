@@ -14,10 +14,25 @@ from .models import ScanConfig, ScanLogEvent
 from .nmap_runner import run_safe_script_scan
 from .scan_executor import ScanJobCallbacks, ScanJobExecutor
 
-try:  # Windows-only helper; importing on other platforms raises.
-    from .privileged_runner import PrivilegedRunnerBackend
-except Exception:  # pragma: no cover - on non-Windows hosts this import fails
-    PrivilegedRunnerBackend = None  # type: ignore[assignment]
+
+def _create_privileged_backend(settings: AppSettings):
+    if sys.platform != "win32":  # pragma: no cover - platform guard
+        raise RuntimeError("Privileged runner backend unavailable on this platform")
+    try:
+        from .privileged_runner import PrivilegedRunnerBackend as RunnerBackend
+    except Exception as exc:  # pragma: no cover - import guard
+        raise RuntimeError("Privileged runner backend unavailable on this platform") from exc
+    return RunnerBackend(settings)
+
+
+def _privileged_backend_available() -> bool:
+    if sys.platform != "win32":
+        return False
+    try:
+        from .privileged_runner import PrivilegedRunnerBackend as RunnerBackend
+    except Exception:
+        return False
+    return RunnerBackend is not None
 
 
 class ScanWorker(QObject):
@@ -153,14 +168,14 @@ class DirectScanBackend(ScanBackend):
 
 
 class PrivilegedScanBackend(ScanBackend):
-    def __init__(self, settings: AppSettings | None = None) -> None:
-        if sys.platform != "win32":  # pragma: no cover - platform guard
-            raise RuntimeError("Privileged runner backend unavailable on this platform")
+    def __init__(
+        self,
+        settings: AppSettings | None = None,
+        backend_factory: Callable[[AppSettings], object] | None = None,
+    ) -> None:
         self._settings = settings or get_settings()
-        backend_cls = PrivilegedRunnerBackend
-        if backend_cls is None:  # Defensive: import failure or stripped binary
-            raise RuntimeError("Privileged runner backend unavailable on this platform")
-        self._backend = backend_cls(self._settings)
+        factory = backend_factory or _create_privileged_backend
+        self._backend = factory(self._settings)
 
     def start(self, config: ScanConfig, callbacks: ScanCallbacks) -> None:
         runner_callbacks = _RunnerCallbackProxy.from_scan_callbacks(callbacks)
@@ -246,11 +261,7 @@ class ScanManager:
 
     @staticmethod
     def _should_use_privileged_backend(settings: AppSettings) -> bool:
-        return (
-            sys.platform == "win32"
-            and settings.runtime.windows_privileged_runner
-            and PrivilegedRunnerBackend is not None
-        )
+        return settings.runtime.windows_privileged_runner and _privileged_backend_available()
 
 
 class SafeScriptWorker(QObject):
