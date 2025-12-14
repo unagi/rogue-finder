@@ -17,6 +17,8 @@ TRANSLATIONS: dict[str, str] = {
     "label_os": "OS",
     "export_csv": "CSV出力",
     "export_json": "JSON出力",
+    "export_csv_dialog": "CSV出力",
+    "export_json_dialog": "JSON出力",
     "export_csv_filter": "CSVファイル (*.csv)",
     "export_json_filter": "JSONファイル (*.json)",
     "export_csv_done": "CSVを書き出しました: {path}",

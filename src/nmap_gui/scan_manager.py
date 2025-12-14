@@ -1,7 +1,6 @@
 """Scan orchestration layer bridging GUI and multiprocessing workers."""
 from __future__ import annotations
 
-import importlib
 import sys
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -30,10 +29,10 @@ def _privileged_backend_available() -> bool:
     if sys.platform != "win32":
         return False
     try:
-        importlib.import_module(f"{__package__}.privileged_runner")
+        from .privileged_runner import PrivilegedRunnerBackend as RunnerBackend
     except Exception:
         return False
-    return True
+    return RunnerBackend is not None
 
 
 class ScanWorker(QObject):
