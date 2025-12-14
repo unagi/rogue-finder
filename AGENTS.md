@@ -41,6 +41,7 @@
 - When adding or updating translations, pass every translation key as a literal string directly to the translation helpers (`self._t()`, `translate()`, `_label()`, etc.) so the automated catalog tests can statically verify that each key is referenced.
 - Translation identifiers follow one of two shapes: `section.label` for regular entries, or `category/subkey` for grouped strings. The slash form is reserved for `translate_grouped_key()` calls, and each identifier may contain at most one `/` segment separator.
 - Internal refactors do not require compatibility shims for old module paths (e.g., `nmap_gui.exporters`). Update in-repo imports/tests directly so the codebase reflects the new structure.
+- GUI wiring files that are impractical to unit test (e.g., `src/nmap_gui/gui/controller/main_window_controller.py` and everything under `gui/view`) stay excluded from coverage in both coverage.py and SonarCloud; update both configs together if the exclusions ever change.
 
 ## Development Mindset
 - Always validate external resources and migration guidance with Context7 first; only fall back to broader research if Context7 cannot resolve the issue.
