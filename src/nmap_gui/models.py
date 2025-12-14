@@ -5,7 +5,6 @@ from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from enum import Enum, auto
-from typing import Any
 
 
 class ScanMode(Enum):
@@ -38,35 +37,6 @@ class ScanLogEvent:
     line: str
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
-    def to_message(self) -> dict[str, Any]:
-        return {
-            "target": self.target,
-            "phase": self.phase.name if self.phase else None,
-            "stream": self.stream,
-            "line": self.line,
-            "timestamp": self.timestamp.isoformat(),
-        }
-
-    @staticmethod
-    def from_message(payload: dict[str, Any]) -> ScanLogEvent:
-        phase_name = payload.get("phase")
-        phase = ScanMode[phase_name] if phase_name else None
-        timestamp_text = payload.get("timestamp")
-        if timestamp_text:
-            try:
-                timestamp = datetime.fromisoformat(timestamp_text)
-            except ValueError:
-                timestamp = datetime.now(UTC)
-        else:
-            timestamp = datetime.now(UTC)
-        return ScanLogEvent(
-            target=str(payload.get("target", "")),
-            phase=phase,
-            stream=str(payload.get("stream", "")),
-            line=str(payload.get("line", "")),
-            timestamp=timestamp,
-        )
-
 @dataclass
 class ErrorRecord:
     """Structured error payload with translation keys and remediation hints."""
@@ -83,16 +53,6 @@ class ErrorRecord:
             "action_key": self.action_key,
             "context": dict(self.context),
         }
-
-    @staticmethod
-    def from_dict(payload: dict[str, Any]) -> ErrorRecord:
-        context = payload.get("context") or {}
-        return ErrorRecord(
-            code=str(payload.get("code", "")),
-            message_key=str(payload.get("message_key", "")),
-            action_key=str(payload.get("action_key", "")),
-            context={str(k): str(v) for k, v in context.items()},
-        )
 
 
 @dataclass
@@ -137,44 +97,6 @@ class HostScanResult:
             data["diagnostics_report"] = None
         return data
 
-    @classmethod
-    def from_dict(cls, payload: dict[str, Any]) -> HostScanResult:
-        errors = [ErrorRecord.from_dict(item) for item in payload.get("errors", [])]
-        result = cls(
-            target=str(payload.get("target", "")),
-            is_alive=bool(payload.get("is_alive", False)),
-            open_ports=list(payload.get("open_ports", [])),
-            os_guess=str(payload.get("os_guess", "Unknown")),
-            os_accuracy=payload.get("os_accuracy"),
-            high_ports=list(payload.get("high_ports", [])),
-            score_breakdown=dict(payload.get("score_breakdown", {})),
-            score=int(payload.get("score", 0)),
-            priority=str(payload.get("priority", "Unknown")),
-            errors=errors,
-            detail_level=str(payload.get("detail_level", "fast")),
-            detail_updated_at=payload.get("detail_updated_at"),
-            diagnostics_status=str(payload.get("diagnostics_status", "not_started")),
-            diagnostics_updated_at=payload.get("diagnostics_updated_at"),
-            is_placeholder=bool(payload.get("is_placeholder", False)),
-        )
-        report_payload = payload.get("diagnostics_report")
-        if report_payload:
-            result.diagnostics_report = SafeScanReport(
-                target=str(report_payload.get("target", result.target)),
-                command=str(report_payload.get("command", "")),
-                started_at=datetime.fromisoformat(report_payload["started_at"])
-                if report_payload.get("started_at")
-                else datetime.now(UTC),
-                finished_at=datetime.fromisoformat(report_payload["finished_at"])
-                if report_payload.get("finished_at")
-                else datetime.now(UTC),
-                stdout=str(report_payload.get("stdout", "")),
-                stderr=str(report_payload.get("stderr", "")),
-                exit_code=report_payload.get("exit_code"),
-                errors=[ErrorRecord.from_dict(item) for item in report_payload.get("errors", [])],
-            )
-        return result
-
 
 @dataclass
 class SafeScanReport:
@@ -208,31 +130,3 @@ def sanitize_targets(raw_value: str) -> list[str]:
     for sep in separators:
         normalized = normalized.replace(sep, " ")
     return [item.strip() for item in normalized.split(" ") if item.strip()]
-
-
-def serialize_scan_config(config: ScanConfig) -> dict[str, Any]:
-    return {
-        "targets": list(config.targets),
-        "scan_modes": [mode.name for mode in config.scan_modes],
-        "port_list": list(config.port_list) if config.port_list else None,
-        "timeout_seconds": config.timeout_seconds,
-        "max_parallel": config.max_parallel,
-        "detail_label": config.detail_label,
-    }
-
-
-def deserialize_scan_config(payload: dict[str, Any]) -> ScanConfig:
-    scan_mode_names = payload.get("scan_modes") or []
-    modes = {ScanMode[name] for name in scan_mode_names}
-    port_list = payload.get("port_list")
-    timeout = payload.get("timeout_seconds")
-    max_parallel = payload.get("max_parallel")
-    detail_label = payload.get("detail_label", "fast")
-    return ScanConfig(
-        targets=payload.get("targets", []),
-        scan_modes=modes,
-        port_list=tuple(port_list) if port_list else None,
-        timeout_seconds=int(timeout) if timeout is not None else None,
-        max_parallel=int(max_parallel) if max_parallel is not None else None,
-        detail_label=str(detail_label),
-    )
