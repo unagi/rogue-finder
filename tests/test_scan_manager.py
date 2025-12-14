@@ -597,6 +597,48 @@ def test_direct_scan_backend_uses_worker_thread(monkeypatch):
     assert backend.is_running() is False
 
 
+def test_direct_scan_backend_forwards_worker_signals(monkeypatch):
+    monkeypatch.setattr(scan_manager, "QThread", _TrackingThread)
+
+    class FiringWorker(_ScanWorkerStub):
+        def start(self):
+            self.progress.emit(1, 3)
+            self.result_ready.emit("payload")
+            self.error.emit("boom")
+            self.log_ready.emit("log-entry")
+
+    monkeypatch.setattr(scan_manager, "ScanWorker", FiringWorker)
+
+    backend = scan_manager.DirectScanBackend(settings=SimpleNamespace())
+    collected: list[tuple[str, object]] = []
+    logs: list[object] = []
+    finished: list[str] = []
+
+    callbacks = scan_manager.ScanCallbacks(
+        on_started=lambda total: None,
+        on_progress=lambda done, total: collected.append(("progress", (done, total))),
+        on_result=lambda payload: collected.append(("result", payload)),
+        on_error=lambda payload: collected.append(("error", payload)),
+        on_finished=lambda: finished.append("done"),
+        on_log=lambda event: logs.append(event),
+    )
+
+    config = ScanConfig(targets=["alpha"], scan_modes={ScanMode.ICMP})
+    backend.start(config, callbacks)
+    assert collected == [
+        ("progress", (1, 3)),
+        ("result", "payload"),
+        ("error", "boom"),
+    ]
+    assert logs == ["log-entry"]
+
+    backend._worker.finished.emit()  # type: ignore[union-attr]
+    assert finished == ["done"]
+
+    backend.stop()
+    assert backend.is_running() is False
+
+
 def test_scan_controller_propagates_callbacks():
     backend = _BackendStub()
     manager = scan_manager.ScanManager(settings=SimpleNamespace(), backend=backend)
@@ -643,8 +685,15 @@ def test_scan_controller_propagates_callbacks():
     backend.callbacks.on_finished()  # type: ignore[union-attr]
     assert finished == ["done"]
 
+    assert controller.is_running() is True
+
     controller.stop()
     assert backend.running is False
+    assert controller.is_running() is False
+
+    sentinel_settings = SimpleNamespace()
+    controller.update_settings(sentinel_settings)
+    assert backend.settings is sentinel_settings
 
 
 def test_direct_safe_script_backend_runs_worker(monkeypatch):
@@ -676,6 +725,43 @@ def test_direct_safe_script_backend_runs_worker(monkeypatch):
     assert backend.is_running() is False
 
 
+def test_direct_safe_script_backend_forwards_signals(monkeypatch):
+    monkeypatch.setattr(scan_manager, "QThread", _TrackingThread)
+
+    class FiringSafeWorker(_SafeScriptWorkerStub):
+        def start(self):
+            self.progress.emit(1, 2)
+            self.result_ready.emit("report")
+            self.error.emit(RuntimeError("err"))
+
+    monkeypatch.setattr(scan_manager, "SafeScriptWorker", FiringSafeWorker)
+
+    backend = scan_manager.DirectSafeScriptBackend(settings=SimpleNamespace())
+    progress: list[tuple[int, int]] = []
+    results: list[object] = []
+    errors: list[object] = []
+    finished: list[str] = []
+
+    callbacks = scan_manager.SafeScriptCallbacks(
+        on_started=lambda total: None,
+        on_progress=lambda done, total: progress.append((done, total)),
+        on_result=lambda payload: results.append(payload),
+        on_error=lambda payload: errors.append(payload),
+        on_finished=lambda: finished.append("done"),
+    )
+
+    backend.start(["a"], callbacks)
+    assert progress == [(1, 2)]
+    assert results == ["report"]
+    assert errors and isinstance(errors[0], RuntimeError)
+
+    backend._worker.finished.emit()  # type: ignore[union-attr]
+    assert finished == ["done"]
+
+    backend.stop()
+    assert backend.is_running() is False
+
+
 def test_safe_script_controller_handles_unique_targets():
     backend = _SafeBackendStub()
     manager = scan_manager.SafeScriptManager(settings=SimpleNamespace(), backend=backend)
@@ -700,5 +786,12 @@ def test_safe_script_controller_handles_unique_targets():
     backend.callbacks.on_progress(1, 2)  # type: ignore[union-attr]
     assert progress == [(1, 2)]
 
+    assert controller.is_running() is True
+
     controller.stop()
     assert backend.running is False
+    assert controller.is_running() is False
+
+    sentinel = SimpleNamespace()
+    controller.update_settings(sentinel)
+    assert backend.settings is sentinel
