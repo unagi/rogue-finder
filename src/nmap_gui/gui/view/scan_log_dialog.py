@@ -18,9 +18,9 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from ..i18n import translate
-from ..models import ScanLogEvent, ScanMode
-from ..utils import slugify_filename_component
+from ...i18n import translate
+from ...models import ScanLogEvent, ScanMode
+from ...utils import slugify_filename_component
 
 
 class ScanLogDialog(QDialog):

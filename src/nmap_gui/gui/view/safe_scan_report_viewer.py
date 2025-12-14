@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from ..models import SafeScanReport
+from ...models import SafeScanReport
 from .safe_scan_report_formatter import build_default_filename, build_report_text, build_status_text
 
 

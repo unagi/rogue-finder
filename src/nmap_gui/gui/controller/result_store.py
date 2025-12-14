@@ -4,9 +4,9 @@ from __future__ import annotations
 import copy
 from collections.abc import Sequence
 
-from ..models import HostScanResult, SafeScanReport
-from .result_grid import ResultGrid
-from .summary_panel import SummaryPanel
+from ...models import HostScanResult, SafeScanReport
+from ..view.result_grid import ResultGrid
+from ..view.summary_panel import SummaryPanel
 
 
 class ResultStore:

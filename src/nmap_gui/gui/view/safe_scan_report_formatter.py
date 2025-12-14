@@ -1,9 +1,9 @@
 """Shared helpers for formatting SafeScanReport content."""
 from __future__ import annotations
 
-from ..i18n import format_error_record, translate
-from ..models import SafeScanReport
-from ..utils import slugify_filename_component
+from ...i18n import format_error_record, translate
+from ...models import SafeScanReport
+from ...utils import slugify_filename_component
 
 
 def build_status_text(report: SafeScanReport, language: str) -> str:

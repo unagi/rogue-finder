@@ -7,11 +7,11 @@ from contextlib import suppress
 from PySide6.QtCore import QByteArray, QTimer
 from PySide6.QtWidgets import QMainWindow, QMessageBox
 
-from ..state_store import AppState, load_state, save_state
-from ..storage_warnings import StorageWarning, consume_storage_warnings
-from .result_grid import ResultGrid
+from ...state_store import AppState, load_state, save_state
+from ...storage_warnings import StorageWarning, consume_storage_warnings
+from ..view.result_grid import ResultGrid
+from ..view.scan_controls import ScanControlsPanel
 from .result_store import ResultStore
-from .scan_controls import ScanControlsPanel
 
 Translator = Callable[[str], str]
 

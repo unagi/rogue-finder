@@ -11,12 +11,12 @@ from PySide6.QtCore import QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QFileDialog, QMainWindow, QMessageBox, QVBoxLayout, QWidget
 
-from ..config import AppSettings, get_settings
-from ..eta import EstimatorConfig, ParallelJobTimeEstimator, TaskSpec, WorkBasedEstimator
-from ..exporters import export_csv, export_json
-from ..i18n import detect_language, format_error_list, format_error_record, translate
-from ..job_eta import JobEtaController
-from ..models import (
+from ...config import AppSettings, get_settings
+from ...eta import EstimatorConfig, ParallelJobTimeEstimator, TaskSpec, WorkBasedEstimator
+from ...exporters import export_csv, export_json
+from ...i18n import detect_language, format_error_list, format_error_record, translate
+from ...job_eta import JobEtaController
+from ...models import (
     ErrorRecord,
     HostScanResult,
     SafeScanReport,
@@ -25,18 +25,18 @@ from ..models import (
     ScanMode,
     sanitize_targets,
 )
-from ..scan_manager import ScanManager
-from ..state_store import AppState
+from ...scan_controller import ScanController
+from ...state_store import AppState
+from ..controller.privileges import has_required_privileges, show_privileged_hint
+from ..controller.result_store import ResultStore
+from ..controller.safe_scan_controller import SafeScanController
+from ..controller.state_controller import StateController
 from .config_editor import ConfigEditorDialog
 from .export_toolbar import ExportToolbar
-from .privileges import has_required_privileges, show_privileged_hint
 from .result_grid import ResultGrid
-from .result_store import ResultStore
-from .safe_scan_controller import SafeScanController
 from .safe_scan_report_viewer import SafeScanReportViewer
 from .scan_controls import ScanControlsPanel, ScanControlsState
 from .scan_log_dialog import ScanLogDialog
-from .state_controller import StateController
 from .summary_panel import SummaryPanel
 
 
@@ -82,7 +82,7 @@ class MainWindow(QMainWindow):
         self._export_toolbar.export_json_requested.connect(self._export_json)
         self._report_viewer = SafeScanReportViewer(self._t, self._language, self)
         self._result_store = ResultStore(self._result_grid, self._summary_panel)
-        self._scan_manager = ScanManager(self._settings)
+        self._scan_manager = ScanController(self._settings)
         self._target_count = 0
         self._requested_host_estimate = 0
         self._summary_status = self._t("summary_status_idle")

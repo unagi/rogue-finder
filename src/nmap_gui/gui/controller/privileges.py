@@ -9,7 +9,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QMessageBox, QWidget
 
-from ..models import ScanMode
+from ...models import ScanMode
 
 Translator = Callable[[str], str]
 

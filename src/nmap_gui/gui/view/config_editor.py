@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..config import (
+from ...config import (
     AppSettings,
     config_file_path,
     get_settings,
