@@ -7,7 +7,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from nmap_gui.gui.controller import privileges, result_store as result_store_mod, state_controller as state_controller_mod
+from nmap_gui.gui.controller import (
+    privileges,
+    result_store as result_store_mod,
+    safe_scan_controller as safe_scan_controller_mod,
+    state_controller as state_controller_mod,
+)
 from nmap_gui.models import ErrorRecord, HostScanResult, SafeScanReport, ScanMode
 from nmap_gui.state_store import AppState
 from nmap_gui.storage_warnings import StorageWarning
@@ -245,7 +250,88 @@ class StubResultStore:
         return self.snapshots[-1]
 
 
-def _translator_factory() -> Callable[[str], str]:
+# ---------- SafeScanController helpers ----------
+
+
+class DummySignal:
+    def __init__(self):
+        self.handlers: list[Callable[..., None]] = []
+
+    def connect(self, handler: Callable[..., None]) -> None:
+        self.handlers.append(handler)
+
+    def emit(self, *args, **kwargs) -> None:
+        for handler in list(self.handlers):
+            handler(*args, **kwargs)
+
+
+class FakeSafeScriptManager:
+    def __init__(self, settings):
+        self.settings = settings
+        self.started = DummySignal()
+        self.progress = DummySignal()
+        self.result_ready = DummySignal()
+        self.error = DummySignal()
+        self.finished = DummySignal()
+        self.start_calls: list[list[str]] = []
+        self.stop_calls = 0
+        self.running = False
+
+    def start(self, targets):
+        self.start_calls.append(list(targets))
+        self.running = True
+
+    def stop(self):
+        self.stop_calls += 1
+        self.running = False
+
+    def is_running(self):
+        return self.running
+
+    def update_settings(self, settings):
+        self.settings = settings
+
+
+class StubJobEta:
+    def __init__(self):
+        self.started: list[tuple[str, float, str]] = []
+        self.stopped: list[str] = []
+
+    def start(self, *, kind: str, expected_seconds: float, message_builder):
+        self.started.append((kind, expected_seconds, message_builder(0)))
+
+    def stop(self, kind: str) -> None:
+        self.stopped.append(kind)
+
+
+class DummyMessageBox:
+    calls: list[tuple[object, str, str]] = []
+
+    @staticmethod
+    def critical(parent, title, body):
+        DummyMessageBox.calls.append((parent, title, body))
+
+
+class FakeTime:
+    def __init__(self):
+        self.value = 0.0
+
+    def monotonic(self):
+        self.value += 1.0
+        return self.value
+
+
+def _safe_scan_settings():
+    safe_scan = SimpleNamespace(
+        max_parallel=2,
+        timeout_seconds=30,
+        default_duration_seconds=10,
+        history_limit=5,
+    )
+    return SimpleNamespace(safe_scan=safe_scan)
+
+
+def _translator_factory():
     translations = {
         "storage_warning_title": "Storage Warning",
         "storage_warning_body": "Please review",
@@ -254,12 +340,68 @@ def _translator_factory() -> Callable[[str], str]:
         "storage_warning_exit": "Exit",
         "storage_scope_state": "State",
         "storage_action_write": "Write",
+        "safe_scan_report_ready": "Report ready for {target}",
+        "safe_scan_error_title": "Error",
+        "safe_scan_error_body": "Failed: {message}",
+        "safe_scan_progress_complete_multi": "Completed {total} in {seconds}s",
+        "safe_scan_progress_finished": "Finished",
+        "safe_scan_progress_running_multi": "Running {done}/{total} ETA {eta}",
     }
 
     def _translate(key: str) -> str:
         return translations.get(key, key)
 
     return _translate
+
+
+def _build_safe_scan_controller(monkeypatch):
+    created: list[FakeSafeScriptManager] = []
+
+    def _fake_ctor(settings):
+        manager = FakeSafeScriptManager(settings)
+        created.append(manager)
+        return manager
+
+    monkeypatch.setattr(safe_scan_controller_mod, "SafeScriptController", _fake_ctor)
+    monkeypatch.setattr(safe_scan_controller_mod, "QMessageBox", DummyMessageBox)
+    fake_time = FakeTime()
+    monkeypatch.setattr(safe_scan_controller_mod, "time", fake_time)
+
+    job_eta = StubJobEta()
+    status_messages: list[str] = []
+    summary_states: list[str] = []
+    refresh_calls: list[str] = []
+    diag_status: list[tuple[str, str]] = []
+    cleared: list[str] = []
+    stored_reports: list[SafeScanReport] = []
+    active_flag = [False]
+
+    controller = safe_scan_controller_mod.SafeScanController(
+        settings=_safe_scan_settings(),
+        translator=_translator_factory(),
+        parent=object(),
+        job_eta=job_eta,
+        status_callback=status_messages.append,
+        set_summary_state=summary_states.append,
+        refresh_actions=lambda: refresh_calls.append("refresh"),
+        is_scan_active=lambda: active_flag[0],
+        set_diagnostics_status=lambda target, status: diag_status.append((target, status)),
+        clear_safety_selection=lambda target: cleared.append(target),
+        store_diagnostics_report=lambda report: stored_reports.append(report),
+    )
+    manager = created[-1]
+    context = {
+        "job_eta": job_eta,
+        "status_messages": status_messages,
+        "summary_states": summary_states,
+        "refresh_calls": refresh_calls,
+        "diag_status": diag_status,
+        "cleared": cleared,
+        "stored_reports": stored_reports,
+        "active_flag": active_flag,
+    }
+    return controller, manager, context
+
 
 
 def test_state_controller_initialize_apply_and_collect(monkeypatch):
@@ -387,3 +529,61 @@ def test_state_controller_prompt_storage_warnings(monkeypatch):
 
     FakeMessageBox.next_result = "reject"
     assert controller._prompt_storage_warnings(window) is False
+
+
+# ---------- SafeScanController tests ----------
+
+
+def test_safe_scan_controller_start_stop(monkeypatch):
+    controller, manager, context = _build_safe_scan_controller(monkeypatch)
+
+    controller.start(["alpha", "beta"])
+    assert manager.start_calls == [["alpha", "beta"]]
+    assert controller.is_running() is True
+
+    controller.stop()
+    assert manager.stop_calls == 1
+    assert controller.is_running() is False
+
+    new_settings = _safe_scan_settings()
+    new_settings.safe_scan.max_parallel = 4
+    controller.update_settings(new_settings)
+    assert manager.settings is new_settings
+
+
+def test_safe_scan_controller_signal_flow(monkeypatch):
+    controller, manager, context = _build_safe_scan_controller(monkeypatch)
+    job_eta = context["job_eta"]
+
+    manager.started.emit(2)
+    assert controller.is_active() is True
+    assert context["summary_states"][-1] == "summary_status_safe_running"
+    assert job_eta.started and job_eta.started[0][0] == "safe"
+
+    manager.progress.emit(1, 2)
+    assert len(job_eta.started) >= 2
+
+    report = SafeScanReport(
+        target="alpha",
+        command="cmd",
+        started_at=datetime.now(UTC),
+        finished_at=datetime.now(UTC),
+        stdout="ok",
+        stderr="",
+        exit_code=0,
+    )
+    manager.result_ready.emit(report)
+    assert context["diag_status"][-1] == ("alpha", "completed")
+    assert context["cleared"] == ["alpha"]
+    assert context["stored_reports"] == [report]
+    assert context["status_messages"][-1] == "Report ready for alpha"
+
+    DummyMessageBox.calls.clear()
+    manager.error.emit(RuntimeError("boom"))
+    assert DummyMessageBox.calls and "Failed: boom" in DummyMessageBox.calls[-1][2]
+    assert job_eta.stopped[-1] == "safe"
+
+    context["active_flag"][0] = False
+    manager.finished.emit()
+    assert controller.is_active() is False
+    assert "Completed" in context["status_messages"][-1]
