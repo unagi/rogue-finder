@@ -69,7 +69,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         from .gui.view.app_icon import load_app_icon
     except ImportError:  # pragma: no cover - mirrors main window fallback
-        from nmap_gui.gui.app_icon import load_app_icon
+        from nmap_gui.gui.view.app_icon import load_app_icon
 
     app_icon = load_app_icon()
     if not app_icon.isNull():
