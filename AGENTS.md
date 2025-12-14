@@ -39,6 +39,7 @@
 - When editing any GitHub Actions workflow, pin every `uses:` reference to a full-length commit SHA. Pick the desired release tag (usually “latest patch within the in-use major”) with `gh release list --repo OWNER/REPO`, then resolve its commit via `gh api repos/OWNER/REPO/git/refs/tags/<tag>` (or `/heads/<branch>` when an action only ships branches). Paste the SHA plus a trailing comment like `# actions/checkout@v4.3.1` so future upgrades know which tag was locked.
 - Avoid hand-editing the changelog; regenerate locally via `git cliff -c cliff.toml -o CHANGELOG.md` if you need to preview.
 - When adding or updating translations, pass every translation key as a literal string directly to the translation helpers (`self._t()`, `translate()`, `_label()`, etc.) so the automated catalog tests can statically verify that each key is referenced.
+- Translation identifiers follow one of two shapes: `section.label` for regular entries, or `category/subkey` for grouped strings. The slash form is reserved for `translate_grouped_key()` calls, and each identifier may contain at most one `/` segment separator.
 
 ## Development Mindset
 - Always validate external resources and migration guidance with Context7 first; only fall back to broader research if Context7 cannot resolve the issue.

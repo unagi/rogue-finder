@@ -40,8 +40,7 @@ def _iter_sources() -> Iterable[Path]:
 
 def _collect_literal_usage(catalog_keys: set[str]) -> set[str]:
     keys: set[str] = set()
-    for source_path in _iter_sources():
-        tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
+    for _source_path, tree in _iter_source_trees():
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
                 func_name = _call_name(node.func)
@@ -53,6 +52,13 @@ def _collect_literal_usage(catalog_keys: set[str]) -> set[str]:
                         keys.add(key)
                 keys.update(_collect_error_keys(node))
     return keys
+
+
+def _iter_source_trees() -> Iterable[tuple[Path, ast.AST]]:
+    for source_path in _iter_sources():
+        yield source_path, ast.parse(
+            source_path.read_text(encoding="utf-8"), filename=str(source_path)
+        )
 
 
 def _call_name(node: ast.AST) -> str | None:
@@ -105,6 +111,17 @@ def _collect_error_keys(node: ast.Call) -> set[str]:
     return keys
 
 
+def _collect_group_categories_in_use() -> set[str]:
+    categories: set[str] = set()
+    for _path, tree in _iter_source_trees():
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and _call_name(node.func) == "translate_grouped_key":
+                category = _string_arg(node)
+                if category:
+                    categories.add(category)
+    return categories
+
+
 def test_catalogs_stay_in_sync() -> None:
     en_keys, ja_keys = _load_catalog_keys()
     missing_in_ja = sorted(en_keys - ja_keys)
@@ -119,3 +136,23 @@ def test_english_keys_are_used() -> None:
     used_keys = _collect_literal_usage(en_keys)
     unused = sorted(key for key in en_keys if key not in used_keys)
     assert not unused, f"Unused translation keys detected: {unused}"
+
+
+def test_grouped_keys_have_translate_calls() -> None:
+    en_keys, _ = _load_catalog_keys()
+    grouped_categories = {key.split("/", 1)[0] for key in en_keys if "/" in key}
+    helper_categories = _collect_group_categories_in_use()
+    missing = sorted(grouped_categories - helper_categories)
+    assert not missing, (
+        "Grouped translation categories missing translate_grouped_key usage: " f"{missing}"
+    )
+
+
+def test_catalog_keys_use_single_group_separator() -> None:
+    en_keys, ja_keys = _load_catalog_keys()
+    invalid = sorted(
+        key
+        for key in en_keys | ja_keys
+        if key.count("/") > 1
+    )
+    assert not invalid, f"Invalid grouped key format (multiple '/'): {invalid}"
