@@ -36,20 +36,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Enable debug logging output",
     )
-    parser.add_argument(
-        "--mode",
-        choices=("gui", "runner"),
-        default="gui",
-        help="Launch the GUI (default) or the privileged runner helper",
-    )
-    parser.add_argument(
-        "--ipc-name",
-        help="Named pipe endpoint passed to --mode runner",
-    )
-    parser.add_argument(
-        "--ipc-token",
-        help="Authentication token passed to --mode runner",
-    )
     return parser
 
 
@@ -62,9 +48,6 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     mp.freeze_support()
-
-    if args.mode == "runner":
-        return _run_privileged_mode(args)
     app = QApplication(sys.argv)
     try:
         from .gui.view.app_icon import load_app_icon
@@ -88,20 +71,6 @@ def main(argv: list[str] | None = None) -> int:
     window = MainWindow(settings, app_icon=app_icon)
     window.show()
     return app.exec()
-
-
-def _run_privileged_mode(args) -> int:
-    if sys.platform != "win32":
-        logging.error("Privileged runner mode is only available on Windows")
-        return 2
-    if not args.ipc_name or not args.ipc_token:
-        logging.error("--ipc-name and --ipc-token are required for runner mode")
-        return 2
-    try:
-        from .privileged_runner import run_privileged_runner
-    except ImportError:  # pragma: no cover - shouldn't happen in packaged builds
-        from nmap_gui.privileged_runner import run_privileged_runner
-    return run_privileged_runner(args.ipc_name, args.ipc_token)
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry hand-off

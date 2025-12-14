@@ -652,7 +652,7 @@ class MainWindowController:
             return
         path, _ = QFileDialog.getSaveFileName(
             self._window,
-            self._t("export_csv"),
+            self._t("export_csv_dialog"),
             "scan_results.csv",
             self._t("export_csv_filter"),
         )
@@ -671,7 +671,7 @@ class MainWindowController:
             return
         path, _ = QFileDialog.getSaveFileName(
             self._window,
-            self._t("export_json"),
+            self._t("export_json_dialog"),
             "scan_results.json",
             self._t("export_json_filter"),
         )
