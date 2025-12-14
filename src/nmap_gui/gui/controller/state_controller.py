@@ -7,6 +7,7 @@ from contextlib import suppress
 from PySide6.QtCore import QByteArray, QTimer
 from PySide6.QtWidgets import QMainWindow, QMessageBox
 
+from ...i18n import translate_grouped_key
 from ...state_store import AppState, load_state, save_state
 from ...storage_warnings import StorageWarning, consume_storage_warnings
 from ..view.result_grid import ResultGrid
@@ -150,11 +151,11 @@ class StateController:
         )
 
     def _storage_scope_label(self, scope: str) -> str:
-        key = f"storage_scope_{scope}"
-        label = self._translator(key)
+        key = f"storage_scope/{scope}"
+        label = translate_grouped_key("storage_scope", scope, self._translator)
         return label if label != key else scope
 
     def _storage_action_label(self, action: str) -> str:
-        key = f"storage_action_{action}"
-        label = self._translator(key)
+        key = f"storage_action/{action}"
+        label = translate_grouped_key("storage_action", action, self._translator)
         return label if label != key else action

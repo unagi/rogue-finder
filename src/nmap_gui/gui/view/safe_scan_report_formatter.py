@@ -7,8 +7,10 @@ from ...utils import slugify_filename_component
 
 
 def build_status_text(report: SafeScanReport, language: str) -> str:
-    status_key = "safe_scan_status_success" if report.success else "safe_scan_status_failure"
-    status_value = translate(status_key, language)
+    if report.success:
+        status_value = translate("safe_scan_status_success", language)
+    else:
+        status_value = translate("safe_scan_status_failure", language)
     return translate("safe_scan_status_label", language).format(status=status_value)
 
 

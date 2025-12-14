@@ -452,7 +452,7 @@ class MainWindow(QMainWindow):
 
     def _update_mac_limited_label(self) -> None:
         limited = sys.platform == "darwin" and not has_required_privileges({ScanMode.OS})
-        message = self._t("mac_limited_body")
+        message = f"{self._t('mac_limited_title')}: {self._t('mac_limited_body')}"
         self._summary_panel.set_mac_limited(limited, message)
         self._result_grid.set_os_button_allowed(not limited, tooltip=message if limited else "")
 

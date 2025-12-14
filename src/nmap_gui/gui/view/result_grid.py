@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...i18n import format_error_list
+from ...i18n import format_error_list, translate_grouped_key
 from ...models import HostScanResult
 
 TARGET_COLUMN_INDEX = 0
@@ -593,13 +593,12 @@ class ResultGrid(QObject):
         self._safety_select_all_checkbox.setEnabled(has_rows)
 
     def _diagnostics_status_label(self, status: str) -> str:
-        key_map = {
-            "not_started": "diagnostics_status_not_started",
-            "running": "diagnostics_status_running",
-            "completed": "diagnostics_status_completed",
-            "failed": "diagnostics_status_failed",
-        }
-        return self._t(key_map.get(status, "diagnostics_status_not_started"))
+        return translate_grouped_key(
+            "diagnostics_status",
+            status,
+            self._t,
+            default_subkey="not_started",
+        )
 
     def _apply_row_style(self, row: int, priority: str) -> None:
         color = self._priority_color(priority)
