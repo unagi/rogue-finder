@@ -14,7 +14,6 @@ def _stub_app_icon(monkeypatch, icon):
         module.load_app_icon = lambda: icon
         monkeypatch.setitem(sys.modules, module_name, module)
 
-    _install("nmap_gui.gui.app_icon")
     _install("nmap_gui.gui.view.app_icon")
 
 
@@ -48,7 +47,7 @@ def test_main_exits_when_configuration_fails(monkeypatch):
             return True
 
     class FakeMessageBox:
-        def critical(self, *args, **kwargs):
+        def critical(self, *_args, **_kwargs):
             self.called = True
 
     fake_message_box = FakeMessageBox()
@@ -108,7 +107,7 @@ def test_main_runs_success_path(monkeypatch):
     monkeypatch.setattr(entry, "MainWindow", FakeWindow)
     monkeypatch.setattr(entry, "get_settings", lambda: FakeSettings())
     monkeypatch.setattr(entry.mp, "freeze_support", lambda: None)
-    monkeypatch.setattr(entry, "QMessageBox", types.SimpleNamespace(critical=lambda *args, **kwargs: None))
+    monkeypatch.setattr(entry, "QMessageBox", types.SimpleNamespace(critical=lambda *_args, **_kwargs: None))
     icon = FakeIcon()
     _stub_app_icon(monkeypatch, icon)
 
