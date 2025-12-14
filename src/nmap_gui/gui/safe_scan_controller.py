@@ -10,7 +10,7 @@ from ..config import AppSettings
 from ..eta import EstimatorConfig, ParallelJobTimeEstimator
 from ..job_eta import JobEtaController
 from ..models import SafeScanReport
-from ..scan_manager import SafeScriptManager
+from ..scan_controller import SafeScriptController
 
 Translator = Callable[[str], str]
 
@@ -45,7 +45,7 @@ class SafeScanController:
         self._clear_safety_selection = clear_safety_selection
         self._store_diagnostics_report = store_diagnostics_report
 
-        self._manager = SafeScriptManager(self._settings)
+        self._manager = SafeScriptController(self._settings)
         self._manager.started.connect(self._on_started)
         self._manager.progress.connect(self._on_progress)
         self._manager.result_ready.connect(self._on_result)

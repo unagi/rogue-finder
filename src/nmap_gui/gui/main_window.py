@@ -25,7 +25,7 @@ from ..models import (
     ScanMode,
     sanitize_targets,
 )
-from ..scan_manager import ScanManager
+from ..scan_controller import ScanController
 from ..state_store import AppState
 from .config_editor import ConfigEditorDialog
 from .export_toolbar import ExportToolbar
@@ -82,7 +82,7 @@ class MainWindow(QMainWindow):
         self._export_toolbar.export_json_requested.connect(self._export_json)
         self._report_viewer = SafeScanReportViewer(self._t, self._language, self)
         self._result_store = ResultStore(self._result_grid, self._summary_panel)
-        self._scan_manager = ScanManager(self._settings)
+        self._scan_manager = ScanController(self._settings)
         self._target_count = 0
         self._requested_host_estimate = 0
         self._summary_status = self._t("summary_status_idle")

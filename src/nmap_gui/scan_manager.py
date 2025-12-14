@@ -4,17 +4,19 @@ from __future__ import annotations
 import multiprocessing as mp
 import os
 import sys
+from collections.abc import Callable, Sequence
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from contextlib import suppress
+from dataclasses import dataclass
 from functools import partial
 from threading import Thread
+from typing import Protocol
 
 try:  # Python embedded in PyInstaller on Windows may lack BrokenProcessPool
     from concurrent.futures import BrokenProcessPool
 except ImportError:  # pragma: no cover - fallback for runtimes missing the class
     class BrokenProcessPool(RuntimeError):  # type: ignore[override]
         """Compatibility placeholder so exception handling still works."""
-from collections.abc import Sequence
 from multiprocessing.connection import Connection
 
 from PySide6.QtCore import QObject, QThread, Signal, Slot
@@ -231,35 +233,52 @@ class ScanWorker(QObject):
         return bool(self._cancel_token and self._cancel_token.is_set())
 
 
-class ScanManager(QObject):
-    progress = Signal(int, int)
-    result_ready = Signal(object)
-    error = Signal(object)
-    started = Signal(int)
-    finished = Signal()
-    log_ready = Signal(object)
+@dataclass(slots=True)
+class ScanCallbacks:
+    on_started: Callable[[int], None]
+    on_progress: Callable[[int, int], None]
+    on_result: Callable[[object], None]
+    on_error: Callable[[object], None]
+    on_finished: Callable[[], None]
+    on_log: Callable[[ScanLogEvent], None] | None = None
 
+
+class ScanBackend(Protocol):
+    def start(self, config: ScanConfig, callbacks: ScanCallbacks) -> None:  # pragma: no cover - protocol
+        ...
+
+    def stop(self) -> None:  # pragma: no cover - protocol
+        ...
+
+    def is_running(self) -> bool:  # pragma: no cover - protocol
+        ...
+
+    def update_settings(self, settings: AppSettings) -> None:  # pragma: no cover - protocol
+        ...
+
+
+class DirectScanBackend(ScanBackend):
     def __init__(self, settings: AppSettings | None = None) -> None:
-        super().__init__()
         self._settings = settings or get_settings()
         self._thread: QThread | None = None
         self._worker: ScanWorker | None = None
+        self._callbacks: ScanCallbacks | None = None
 
-    def start(self, config: ScanConfig) -> None:
+    def start(self, config: ScanConfig, callbacks: ScanCallbacks) -> None:
         self.stop()
+        self._callbacks = callbacks
         self._thread = QThread()
         self._worker = ScanWorker(config, self._settings)
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.start)
-        self._worker.progress.connect(self.progress)
-        self._worker.result_ready.connect(self.result_ready)
-        self._worker.error.connect(self.error)
-        self._worker.log_ready.connect(self.log_ready)
+        self._worker.progress.connect(self._emit_progress)
+        self._worker.result_ready.connect(self._emit_result)
+        self._worker.error.connect(self._emit_error)
+        self._worker.log_ready.connect(self._emit_log)
         self._worker.finished.connect(self._thread.quit)
-        self._worker.finished.connect(self.finished)
+        self._worker.finished.connect(self._handle_worker_finished)
         self._thread.finished.connect(self._cleanup_thread)
         self._thread.start()
-        self.started.emit(len(config.targets))
 
     def stop(self) -> None:
         if self._worker:
@@ -272,14 +291,61 @@ class ScanManager(QObject):
     def is_running(self) -> bool:
         return bool(self._thread and self._thread.isRunning())
 
+    def update_settings(self, settings: AppSettings) -> None:
+        self._settings = settings
+
+    def _emit_progress(self, completed: int, total: int) -> None:
+        if self._callbacks:
+            self._callbacks.on_progress(completed, total)
+
+    def _emit_result(self, payload) -> None:
+        if self._callbacks:
+            self._callbacks.on_result(payload)
+
+    def _emit_error(self, payload) -> None:
+        if self._callbacks:
+            self._callbacks.on_error(payload)
+
+    def _emit_log(self, event) -> None:
+        if self._callbacks and self._callbacks.on_log:
+            self._callbacks.on_log(event)
+
+    def _handle_worker_finished(self) -> None:
+        callbacks = self._callbacks
+        self._callbacks = None
+        if callbacks:
+            callbacks.on_finished()
+
     def _cleanup_thread(self) -> None:
         self._worker = None
         if self._thread:
             self._thread.deleteLater()
         self._thread = None
 
+
+class ScanManager:
+    def __init__(
+        self,
+        settings: AppSettings | None = None,
+        backend: ScanBackend | None = None,
+    ) -> None:
+        self._settings = settings or get_settings()
+        self._backend = backend or DirectScanBackend(self._settings)
+
+    def start(self, config: ScanConfig, callbacks: ScanCallbacks) -> None:
+        self.stop()
+        self._backend.start(config, callbacks)
+        callbacks.on_started(len(config.targets))
+
+    def stop(self) -> None:
+        self._backend.stop()
+
+    def is_running(self) -> bool:
+        return self._backend.is_running()
+
     def update_settings(self, settings: AppSettings) -> None:
         self._settings = settings
+        self._backend.update_settings(settings)
 
 
 class SafeScriptWorker(QObject):
@@ -324,37 +390,51 @@ class SafeScriptWorker(QObject):
             self.finished.emit()
 
 
-class SafeScriptManager(QObject):
-    progress = Signal(int, int)
-    result_ready = Signal(object)
-    error = Signal(object)
-    started = Signal(int)
-    finished = Signal()
+@dataclass(slots=True)
+class SafeScriptCallbacks:
+    on_started: Callable[[int], None]
+    on_progress: Callable[[int, int], None]
+    on_result: Callable[[object], None]
+    on_error: Callable[[object], None]
+    on_finished: Callable[[], None]
 
+
+class SafeScriptBackend(Protocol):
+    def start(self, targets: Sequence[str], callbacks: SafeScriptCallbacks) -> None:  # pragma: no cover - protocol
+        ...
+
+    def stop(self) -> None:  # pragma: no cover - protocol
+        ...
+
+    def is_running(self) -> bool:  # pragma: no cover - protocol
+        ...
+
+    def update_settings(self, settings: AppSettings) -> None:  # pragma: no cover - protocol
+        ...
+
+
+class DirectSafeScriptBackend(SafeScriptBackend):
     def __init__(self, settings: AppSettings | None = None) -> None:
-        super().__init__()
         self._settings = settings or get_settings()
         self._thread: QThread | None = None
         self._worker: SafeScriptWorker | None = None
+        self._callbacks: SafeScriptCallbacks | None = None
 
-    def start(self, targets: Sequence[str]) -> None:
+    def start(self, targets: Sequence[str], callbacks: SafeScriptCallbacks) -> None:
         if self.is_running():
             return
-        unique_targets = list(dict.fromkeys(targets))
-        if not unique_targets:
-            return
+        self._callbacks = callbacks
         self._thread = QThread()
-        self._worker = SafeScriptWorker(unique_targets, self._settings)
+        self._worker = SafeScriptWorker(targets, self._settings)
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.start)
-        self._worker.result_ready.connect(self.result_ready)
-        self._worker.error.connect(self.error)
-        self._worker.progress.connect(self.progress)
+        self._worker.result_ready.connect(self._emit_result)
+        self._worker.error.connect(self._emit_error)
+        self._worker.progress.connect(self._emit_progress)
         self._worker.finished.connect(self._thread.quit)
-        self._worker.finished.connect(self.finished)
+        self._worker.finished.connect(self._handle_finished)
         self._thread.finished.connect(self._cleanup_thread)
         self._thread.start()
-        self.started.emit(len(unique_targets))
 
     def stop(self) -> None:
         if self._thread and self._thread.isRunning():
@@ -365,11 +445,58 @@ class SafeScriptManager(QObject):
     def is_running(self) -> bool:
         return bool(self._thread and self._thread.isRunning())
 
+    def update_settings(self, settings: AppSettings) -> None:
+        self._settings = settings
+
+    def _emit_result(self, payload) -> None:
+        if self._callbacks:
+            self._callbacks.on_result(payload)
+
+    def _emit_error(self, payload) -> None:
+        if self._callbacks:
+            self._callbacks.on_error(payload)
+
+    def _emit_progress(self, completed: int, total: int) -> None:
+        if self._callbacks:
+            self._callbacks.on_progress(completed, total)
+
+    def _handle_finished(self) -> None:
+        callbacks = self._callbacks
+        self._callbacks = None
+        if callbacks:
+            callbacks.on_finished()
+
     def _cleanup_thread(self) -> None:
         self._worker = None
         if self._thread:
             self._thread.deleteLater()
         self._thread = None
 
+
+class SafeScriptManager:
+    def __init__(
+        self,
+        settings: AppSettings | None = None,
+        backend: SafeScriptBackend | None = None,
+    ) -> None:
+        self._settings = settings or get_settings()
+        self._backend = backend or DirectSafeScriptBackend(self._settings)
+
+    def start(self, targets: Sequence[str], callbacks: SafeScriptCallbacks) -> None:
+        if self._backend.is_running():
+            return
+        unique_targets = list(dict.fromkeys(targets))
+        if not unique_targets:
+            return
+        self._backend.start(unique_targets, callbacks)
+        callbacks.on_started(len(unique_targets))
+
+    def stop(self) -> None:
+        self._backend.stop()
+
+    def is_running(self) -> bool:
+        return self._backend.is_running()
+
     def update_settings(self, settings: AppSettings) -> None:
         self._settings = settings
+        self._backend.update_settings(settings)

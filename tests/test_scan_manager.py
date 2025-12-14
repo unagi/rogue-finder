@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from nmap_gui import scan_manager
+from nmap_gui import scan_controller, scan_manager
 from nmap_gui.cancel_token import PipeCancelToken
 from nmap_gui.error_codes import ERROR_SCAN_CRASHED, ERROR_WORKER_POOL_FAILED
 from nmap_gui.models import ScanConfig, ScanMode
@@ -500,6 +500,50 @@ class _ScanWorkerStub:
         self.stopped = True
 
 
+class _BackendStub:
+    def __init__(self):
+        self.running = False
+        self.started_configs: list[ScanConfig] = []
+        self.callbacks: scan_manager.ScanCallbacks | None = None
+        self.settings = None
+
+    def start(self, config, callbacks):
+        self.running = True
+        self.started_configs.append(config)
+        self.callbacks = callbacks
+
+    def stop(self):
+        self.running = False
+
+    def is_running(self):
+        return self.running
+
+    def update_settings(self, settings):
+        self.settings = settings
+
+
+class _SafeBackendStub:
+    def __init__(self):
+        self.running = False
+        self.started_targets: list[list[str]] = []
+        self.callbacks: scan_manager.SafeScriptCallbacks | None = None
+        self.settings = None
+
+    def start(self, targets, callbacks):
+        self.running = True
+        self.started_targets.append(list(targets))
+        self.callbacks = callbacks
+
+    def stop(self):
+        self.running = False
+
+    def is_running(self):
+        return self.running
+
+    def update_settings(self, settings):
+        self.settings = settings
+
+
 class _SafeScriptWorkerStub:
     def __init__(self, targets, settings):
         self.targets = targets
@@ -518,7 +562,7 @@ class _SafeScriptWorkerStub:
         self.start_called = True
 
 
-def test_scan_manager_start_and_stop(monkeypatch):
+def test_direct_scan_backend_uses_worker_thread(monkeypatch):
     monkeypatch.setattr(scan_manager, "QThread", _TrackingThread)
     created_workers: list[_ScanWorkerStub] = []
 
@@ -529,25 +573,81 @@ def test_scan_manager_start_and_stop(monkeypatch):
 
     monkeypatch.setattr(scan_manager, "ScanWorker", fake_worker)
 
-    manager = scan_manager.ScanManager(settings=SimpleNamespace())
-    manager.started = _fake_signal()
-    started_counts: list[int] = []
-    manager.started.connect(lambda count: started_counts.append(count))
+    backend = scan_manager.DirectScanBackend(settings=SimpleNamespace())
+    events: list[str] = []
+
+    callbacks = scan_manager.ScanCallbacks(
+        on_started=lambda total: events.append(f"started:{total}"),
+        on_progress=lambda done, total: events.append(f"progress:{done}/{total}"),
+        on_result=lambda payload: events.append(f"result:{payload}"),
+        on_error=lambda payload: events.append(f"error:{payload}"),
+        on_finished=lambda: events.append("finished"),
+        on_log=lambda event: events.append(f"log:{event}"),
+    )
 
     config = ScanConfig(targets=["x", "y"], scan_modes={ScanMode.ICMP})
-    manager.start(config)
+    backend.start(config, callbacks)
 
-    assert started_counts == [2]
-    assert isinstance(manager._thread, _TrackingThread)
+    assert backend.is_running() is True
     assert created_workers and isinstance(created_workers[0], _ScanWorkerStub)
+    assert isinstance(created_workers[0].thread, _TrackingThread)
 
-    manager.stop()
+    backend.stop()
 
-    assert manager._worker is None
-    assert manager._thread is None
+    assert backend.is_running() is False
 
 
-def test_safe_script_manager_start_respects_unique_targets(monkeypatch):
+def test_scan_controller_propagates_callbacks():
+    backend = _BackendStub()
+    manager = scan_manager.ScanManager(settings=SimpleNamespace(), backend=backend)
+    controller = scan_controller.ScanController(manager=manager)
+    controller.started = _fake_signal()
+    controller.progress = _fake_signal()
+    controller.result_ready = _fake_signal()
+    controller.error = _fake_signal()
+    controller.finished = _fake_signal()
+    controller.log_ready = _fake_signal()
+
+    started: list[int] = []
+    controller.started.connect(started.append)
+
+    config = ScanConfig(targets=["a", "b"], scan_modes={ScanMode.ICMP})
+    controller.start(config)
+
+    assert started == [2]
+    assert backend.running is True
+    assert backend.callbacks is not None
+
+    progress: list[tuple[int, int]] = []
+    controller.progress.connect(lambda done, total: progress.append((done, total)))
+    backend.callbacks.on_progress(1, 2)  # type: ignore[union-attr]
+    assert progress == [(1, 2)]
+
+    results: list[object] = []
+    controller.result_ready.connect(results.append)
+    backend.callbacks.on_result("payload")  # type: ignore[union-attr]
+    assert results == ["payload"]
+
+    errors: list[object] = []
+    controller.error.connect(errors.append)
+    backend.callbacks.on_error("boom")  # type: ignore[union-attr]
+    assert errors == ["boom"]
+
+    logs: list[object] = []
+    controller.log_ready.connect(logs.append)
+    backend.callbacks.on_log("log-line")  # type: ignore[union-attr]
+    assert logs == ["log-line"]
+
+    finished: list[str] = []
+    controller.finished.connect(lambda: finished.append("done"))
+    backend.callbacks.on_finished()  # type: ignore[union-attr]
+    assert finished == ["done"]
+
+    controller.stop()
+    assert backend.running is False
+
+
+def test_direct_safe_script_backend_runs_worker(monkeypatch):
     monkeypatch.setattr(scan_manager, "QThread", _TrackingThread)
     created_workers: list[_SafeScriptWorkerStub] = []
 
@@ -558,57 +658,47 @@ def test_safe_script_manager_start_respects_unique_targets(monkeypatch):
 
     monkeypatch.setattr(scan_manager, "SafeScriptWorker", fake_worker)
 
-    manager = scan_manager.SafeScriptManager(settings=SimpleNamespace())
-    manager.started = _fake_signal()
-    started_counts: list[int] = []
-    manager.started.connect(lambda count: started_counts.append(count))
+    backend = scan_manager.DirectSafeScriptBackend(settings=SimpleNamespace())
+    callbacks = scan_manager.SafeScriptCallbacks(
+        on_started=lambda total: None,
+        on_progress=lambda done, total: None,
+        on_result=lambda payload: None,
+        on_error=lambda payload: None,
+        on_finished=lambda: None,
+    )
 
-    manager.start(["a", "a", "b"])
+    backend.start(["a", "b"], callbacks)
 
-    assert started_counts == [2]
-    assert isinstance(manager._thread, _TrackingThread)
-    assert created_workers and created_workers[0].start_called is True
+    assert created_workers and created_workers[0].targets == ["a", "b"]
+    assert backend.is_running() is True
 
-    manager.stop()
-    assert manager._thread is None
+    backend.stop()
+    assert backend.is_running() is False
 
 
-def test_safe_script_manager_start_ignores_running_instance(monkeypatch):
-    class FakeThread:
-        def __init__(self):
-            self.started = _fake_signal()
-            self.finished = _fake_signal()
-            self.running = True
+def test_safe_script_controller_handles_unique_targets():
+    backend = _SafeBackendStub()
+    manager = scan_manager.SafeScriptManager(settings=SimpleNamespace(), backend=backend)
+    controller = scan_controller.SafeScriptController(manager=manager)
+    controller.started = _fake_signal()
+    controller.progress = _fake_signal()
+    controller.result_ready = _fake_signal()
+    controller.error = _fake_signal()
+    controller.finished = _fake_signal()
 
-        def start(self):
-            pass
+    started: list[int] = []
+    controller.started.connect(started.append)
 
-        def isRunning(self):
-            return self.running
+    controller.start(["a", "a", "b"])
 
-        def quit(self):
-            self.running = False
+    assert started == [2]
+    assert backend.started_targets == [["a", "b"]]
+    assert backend.callbacks is not None
 
-        def wait(self, timeout):
-            pass
+    progress: list[tuple[int, int]] = []
+    controller.progress.connect(lambda done, total: progress.append((done, total)))
+    backend.callbacks.on_progress(1, 2)  # type: ignore[union-attr]
+    assert progress == [(1, 2)]
 
-        def deleteLater(self):
-            pass
-
-    monkeypatch.setattr(scan_manager, "QThread", lambda: FakeThread())
-    monkeypatch.setattr(scan_manager, "SafeScriptWorker", lambda targets, settings: SimpleNamespace(
-        moveToThread=lambda thread: None,
-        result_ready=_fake_signal(),
-        error=_fake_signal(),
-        progress=_fake_signal(),
-        finished=_fake_signal(),
-        start=lambda: None,
-    ))
-
-    manager = scan_manager.SafeScriptManager(settings=SimpleNamespace())
-    manager._thread = FakeThread()
-    manager._worker = SimpleNamespace()
-
-    manager.start(["a"])
-
-    assert isinstance(manager._worker, SimpleNamespace)
+    controller.stop()
+    assert backend.running is False
