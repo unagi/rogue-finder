@@ -199,7 +199,7 @@ class MainWindowController:
             total_work += work
         return specs, total_work
 
-    def _start_fast_eta(self, targets: Sequence[str]) -> None:
+    def _start_fast_eta(self) -> None:
         if not self._fast_task_specs:
             return
         rate = self._fast_initial_rate(self._fast_total_work)
@@ -277,7 +277,7 @@ class MainWindowController:
         self._begin_scan_session(kind="fast", targets=targets)
         self._ensure_log_dialog(targets, show=False, reset=True)
         self._scan_manager.start(config)
-        self._start_fast_eta(targets)
+        self._start_fast_eta()
         self._window.statusBar().showMessage(
             self._t("fast_scan_running_status").format(
                 count=self._target_count,
