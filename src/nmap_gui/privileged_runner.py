@@ -148,13 +148,12 @@ class PrivilegedRunnerBackend:
 
     def _accept_with_timeout(self, listener: Listener) -> Connection | None:
         accepted: list[Connection] = []
-        errors: list[BaseException] = []
 
         def _accept() -> None:
             try:
                 conn = listener.accept()
-            except BaseException as exc:  # pragma: no cover - error path
-                errors.append(exc)
+            except OSError as exc:  # pragma: no cover - error path
+                LOGGER.error("Privileged runner listener accept failed: %s", exc)
             else:
                 accepted.append(conn)
 

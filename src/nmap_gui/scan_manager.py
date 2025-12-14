@@ -154,10 +154,13 @@ class DirectScanBackend(ScanBackend):
 
 class PrivilegedScanBackend(ScanBackend):
     def __init__(self, settings: AppSettings | None = None) -> None:
-        if PrivilegedRunnerBackend is None:  # pragma: no cover - platform guard
+        if sys.platform != "win32":  # pragma: no cover - platform guard
             raise RuntimeError("Privileged runner backend unavailable on this platform")
         self._settings = settings or get_settings()
-        self._backend = PrivilegedRunnerBackend(self._settings)
+        backend_cls = PrivilegedRunnerBackend
+        if backend_cls is None:  # Defensive: import failure or stripped binary
+            raise RuntimeError("Privileged runner backend unavailable on this platform")
+        self._backend = backend_cls(self._settings)
 
     def start(self, config: ScanConfig, callbacks: ScanCallbacks) -> None:
         runner_callbacks = _RunnerCallbackProxy.from_scan_callbacks(callbacks)
