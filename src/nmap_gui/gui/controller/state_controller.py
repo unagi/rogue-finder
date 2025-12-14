@@ -10,8 +10,8 @@ from PySide6.QtWidgets import QMainWindow, QMessageBox
 from ...state_store import AppState, load_state, save_state
 from ...storage_warnings import StorageWarning, consume_storage_warnings
 from ..view.result_grid import ResultGrid
-from .result_store import ResultStore
 from ..view.scan_controls import ScanControlsPanel
+from .result_store import ResultStore
 
 Translator = Callable[[str], str]
 

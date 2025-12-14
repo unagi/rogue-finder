@@ -27,6 +27,10 @@ from ...models import (
 )
 from ...scan_controller import ScanController
 from ...state_store import AppState
+from ..controller.privileges import has_required_privileges, show_privileged_hint
+from ..controller.result_store import ResultStore
+from ..controller.safe_scan_controller import SafeScanController
+from ..controller.state_controller import StateController
 from .config_editor import ConfigEditorDialog
 from .export_toolbar import ExportToolbar
 from .result_grid import ResultGrid
@@ -34,10 +38,6 @@ from .safe_scan_report_viewer import SafeScanReportViewer
 from .scan_controls import ScanControlsPanel, ScanControlsState
 from .scan_log_dialog import ScanLogDialog
 from .summary_panel import SummaryPanel
-from ..controller.privileges import has_required_privileges, show_privileged_hint
-from ..controller.result_store import ResultStore
-from ..controller.safe_scan_controller import SafeScanController
-from ..controller.state_controller import StateController
 
 
 class MainWindow(QMainWindow):

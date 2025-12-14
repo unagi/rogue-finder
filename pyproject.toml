@@ -58,6 +58,6 @@ line-length = 130
 extend-select = ["B", "C90", "E", "F", "I", "PLR", "RUF", "SIM", "UP", "W"]
 
 [tool.ruff.lint.per-file-ignores]
-"src/nmap_gui/gui/safe_scan_controller.py" = ["PLR0913"]
-"src/nmap_gui/gui/state_controller.py" = ["PLR0913"]
+"src/nmap_gui/gui/controller/safe_scan_controller.py" = ["PLR0913"]
+"src/nmap_gui/gui/controller/state_controller.py" = ["PLR0913"]
 "src/nmap_gui/nmap_runner.py" = ["PLR0913"]
