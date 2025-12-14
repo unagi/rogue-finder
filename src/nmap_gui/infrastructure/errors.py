@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .models import ErrorRecord
+from ..models import ErrorRecord
 
 
 @dataclass(frozen=True)

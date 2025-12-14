@@ -6,8 +6,8 @@ from types import SimpleNamespace
 import pytest
 
 from nmap_gui import scan_controller, scan_manager
-from nmap_gui.cancel_token import PipeCancelToken
-from nmap_gui.error_codes import ERROR_SCAN_CRASHED, ERROR_WORKER_POOL_FAILED
+from nmap_gui.infrastructure.errors import ERROR_SCAN_CRASHED, ERROR_WORKER_POOL_FAILED
+from nmap_gui.infrastructure.process import PipeCancelToken
 from nmap_gui.models import ScanConfig, ScanMode
 
 THREAD_WORKER_COUNT = 2

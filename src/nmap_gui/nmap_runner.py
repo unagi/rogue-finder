@@ -14,8 +14,8 @@ from datetime import UTC, datetime
 from multiprocessing.synchronize import Event as MpEvent
 from threading import Thread
 
-from .config import DEFAULT_SETTINGS, AppSettings, get_settings
-from .error_codes import (
+from .infrastructure.config import DEFAULT_SETTINGS, AppSettings, get_settings
+from .infrastructure.errors import (
     ERROR_NMAP_FAILED,
     ERROR_NMAP_NOT_FOUND,
     ERROR_NMAP_TIMEOUT,

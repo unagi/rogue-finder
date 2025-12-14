@@ -11,11 +11,17 @@ from PySide6.QtCore import QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QFileDialog, QMainWindow, QMessageBox, QVBoxLayout, QWidget
 
-from ...config import AppSettings, get_settings
-from ...eta import EstimatorConfig, ParallelJobTimeEstimator, TaskSpec, WorkBasedEstimator
 from ...exporters import export_csv, export_json
 from ...i18n import detect_language, format_error_list, format_error_record, translate
-from ...job_eta import JobEtaController
+from ...infrastructure.config import AppSettings, get_settings
+from ...infrastructure.eta import (
+    EstimatorConfig,
+    JobEtaController,
+    ParallelJobTimeEstimator,
+    TaskSpec,
+    WorkBasedEstimator,
+)
+from ...infrastructure.state import AppState
 from ...models import (
     ErrorRecord,
     HostScanResult,
@@ -26,7 +32,6 @@ from ...models import (
     sanitize_targets,
 )
 from ...scan_controller import ScanController
-from ...state_store import AppState
 from ..controller.privileges import has_required_privileges, show_privileged_hint
 from ..controller.result_store import ResultStore
 from ..controller.safe_scan_controller import SafeScanController

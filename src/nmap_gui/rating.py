@@ -5,7 +5,7 @@ from collections.abc import Iterable
 from dataclasses import replace
 from typing import cast
 
-from .config import RatingSettings, get_settings
+from .infrastructure.config import RatingSettings, get_settings
 from .models import HostScanResult
 
 

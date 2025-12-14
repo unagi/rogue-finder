@@ -1,12 +1,12 @@
 import pytest
 
-from nmap_gui.eta import (
+from nmap_gui.infrastructure.eta import (
     EstimatorConfig,
     ParallelJobTimeEstimator,
     TaskSpec,
     WorkBasedEstimator,
-    _ceil_div,
 )
+from nmap_gui.infrastructure.eta.estimators import _ceil_div
 
 
 def test_estimate_before_start_zero_tasks():

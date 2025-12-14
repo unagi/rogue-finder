@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import yaml
 
-from nmap_gui import config
+from nmap_gui.infrastructure import config
 
 USER_TIMEOUT_OVERRIDE = 123
 

@@ -8,8 +8,13 @@ from PySide6.QtCore import QByteArray, QTimer
 from PySide6.QtWidgets import QMainWindow, QMessageBox
 
 from ...i18n import translate_grouped_key
-from ...state_store import AppState, load_state, save_state
-from ...storage_warnings import StorageWarning, consume_storage_warnings
+from ...infrastructure.state import (
+    AppState,
+    StorageWarning,
+    consume_storage_warnings,
+    load_state,
+    save_state,
+)
 from ..view.result_grid import ResultGrid
 from ..view.scan_controls import ScanControlsPanel
 from .result_store import ResultStore

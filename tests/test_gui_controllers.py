@@ -18,9 +18,8 @@ from nmap_gui.gui.controller import (
 from nmap_gui.gui.controller import (
     state_controller as state_controller_mod,
 )
+from nmap_gui.infrastructure.state import AppState, StorageWarning
 from nmap_gui.models import ErrorRecord, HostScanResult, SafeScanReport, ScanMode
-from nmap_gui.state_store import AppState
-from nmap_gui.storage_warnings import StorageWarning
 
 
 def _make_result(target: str, alive: bool = True) -> HostScanResult:

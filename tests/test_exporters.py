@@ -1,9 +1,9 @@
 import csv
 import json
 
-from nmap_gui.error_codes import ERROR_SCAN_ABORTED, build_error
 from nmap_gui.exporters import export_csv, export_json
 from nmap_gui.i18n import format_error_record
+from nmap_gui.infrastructure.errors import ERROR_SCAN_ABORTED, build_error
 from nmap_gui.models import HostScanResult
 
 ICMP_POINTS = 2

@@ -6,9 +6,8 @@ from collections.abc import Callable, Sequence
 
 from PySide6.QtWidgets import QMessageBox, QWidget
 
-from ...config import AppSettings
-from ...eta import EstimatorConfig, ParallelJobTimeEstimator
-from ...job_eta import JobEtaController
+from ...infrastructure.config import AppSettings
+from ...infrastructure.eta import EstimatorConfig, JobEtaController, ParallelJobTimeEstimator
 from ...models import SafeScanReport
 from ...scan_controller import SafeScriptController
 
