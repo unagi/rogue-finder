@@ -6,6 +6,7 @@ import sys
 import time
 from collections.abc import Sequence
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QIcon
@@ -14,8 +15,6 @@ from PySide6.QtWidgets import QFileDialog, QMainWindow, QMessageBox, QVBoxLayout
 from ...eta import EstimatorConfig, ParallelJobTimeEstimator, TaskSpec, WorkBasedEstimator
 from ...exporters import export_csv, export_json
 from ...i18n import detect_language, format_error_list, format_error_record, translate
-from ...infrastructure.config import AppSettings, get_settings
-from ...infrastructure.state import AppState
 from ...job_eta import JobEtaController
 from ...models import (
     ErrorRecord,
@@ -27,6 +26,7 @@ from ...models import (
     sanitize_targets,
 )
 from ...scan_controller import ScanController
+from ..controller.config_controller import ConfigController
 from ..controller.privileges import has_required_privileges, show_privileged_hint
 from ..controller.result_store import ResultStore
 from ..controller.safe_scan_controller import SafeScanController
@@ -39,28 +39,26 @@ from .scan_controls import ScanControlsPanel, ScanControlsState
 from .scan_log_dialog import ScanLogDialog
 from .summary_panel import SummaryPanel
 
+if TYPE_CHECKING:
+    from ...infrastructure.config import AppSettings
+    from ...infrastructure.state import AppState
+else:  # pragma: no cover - runtime placeholders for type checking only
+    AppSettings = object  # type: ignore[assignment]
+    AppState = object  # type: ignore[assignment]
+
 
 class MainWindow(QMainWindow):
     """Primary top-level window."""
 
     def __init__(
         self,
-        settings: AppSettings | None = None,
+        settings: AppSettings,
         state: AppState | None = None,
         app_icon: QIcon | None = None,
     ) -> None:
         super().__init__()
-        self._settings = settings or get_settings()
-        self._language = detect_language()
-        self._priority_labels = {
-            "High": translate("priority_high", self._language),
-            "Medium": translate("priority_medium", self._language),
-            "Low": translate("priority_low", self._language),
-        }
-        self.setWindowTitle(self._t("window_title"))
-        if app_icon is not None and not app_icon.isNull():
-            self.setWindowIcon(app_icon)
-        self.resize(1000, 700)
+        self._settings = settings
+        self._configure_window_chrome(app_icon)
         self._pending_scan_configs: list[ScanConfig] = []
         self._active_scan_kind, self._current_scan_targets = None, []
         self._controls = ScanControlsPanel(self._t, self)
@@ -83,6 +81,7 @@ class MainWindow(QMainWindow):
         self._report_viewer = SafeScanReportViewer(self._t, self._language, self)
         self._result_store = ResultStore(self._result_grid, self._summary_panel)
         self._scan_manager = ScanController(self._settings)
+        self._config_controller = ConfigController()
         self._target_count = 0
         self._requested_host_estimate = 0
         self._summary_status = self._t("summary_status_idle")
@@ -114,6 +113,18 @@ class MainWindow(QMainWindow):
         self._controls.targets_changed.connect(self._on_form_state_changed)
         if not self._state_controller.prompt_storage_warnings(self):
             QTimer.singleShot(0, self.close)
+
+    def _configure_window_chrome(self, app_icon: QIcon | None) -> None:
+        self._language = detect_language()
+        self._priority_labels = {
+            "High": translate("priority_high", self._language),
+            "Medium": translate("priority_medium", self._language),
+            "Low": translate("priority_low", self._language),
+        }
+        self.setWindowTitle(self._t("window_title"))
+        if app_icon is not None and not app_icon.isNull():
+            self.setWindowIcon(app_icon)
+        self.resize(1000, 700)
 
     def _setup_scan_manager(self) -> None:
         self._scan_manager.started.connect(self._on_scan_started)
@@ -750,7 +761,11 @@ class MainWindow(QMainWindow):
             )
             return
         if self._config_editor is None:
-            self._config_editor = ConfigEditorDialog(self._t, self)
+            self._config_editor = ConfigEditorDialog(
+                self._t,
+                self,
+                controller=self._config_controller,
+            )
             self._config_editor.settingsUpdated.connect(self._apply_updated_settings)
             self._config_editor.destroyed.connect(self._on_config_editor_destroyed)
         self._config_editor.reload_from_disk()
