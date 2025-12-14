@@ -8,6 +8,7 @@ Rogue Finder is a cross-platform desktop utility that orchestrates lightweight N
 - Queue multiple targets (IPs, CIDR ranges, hostnames) and let Rogue Finder parallelize work without freezing the GUI.
 - Rate each host using the heuristics documented in README’s **Rating Model Overview** (implemented in `rating.py`), highlight High / Medium / Low priorities, and export structured CSV or JSON files with full score breakdowns and error logs.
 - Respect cancellation: you can stop the run at any time and partial results stay visible.
+- On Windows, only the runner process needs elevation: the GUI stays at standard user level while a privileged helper (prompted once via UAC) executes `nmap` and streams logs/results back over a named pipe.
 
 ## Requirements & Installation
 1. Install Python or simply use the provided PyInstaller binary; no interpreter is required for the packaged build.
@@ -32,6 +33,7 @@ Rogue Finder is a cross-platform desktop utility that orchestrates lightweight N
 
 ## Configuration File
 Every run checks for `rogue-finder.config.yaml` in the directory you launched Rogue Finder from. If the file is missing it is generated with safe defaults; when you upgrade to a newer version the loader backfills any new keys while leaving your existing overrides untouched. Edit this YAML to tune scan timeouts and port lists (`scan` section), weighting rules for scoring (`rating`), safe-script timing heuristics (`safe_scan`), or UI row colors (`ui`). Ship a tailored copy alongside the PyInstaller binary if you want operators to start with organization-specific defaults.
+The `runtime` section currently exposes `windows_privileged_runner` (default `true`), allowing you to disable the Windows helper entirely if your environment forbids elevation prompts.
 
 ## FAQ & Error Codes
 Rogue Finder surfaces consistent error codes everywhere (GUI table, dialogs, exports). Use this list to decide the next action.
@@ -47,6 +49,7 @@ Rogue Finder surfaces consistent error codes everywhere (GUI table, dialogs, exp
 
 ## Additional Notes
 - **SmartScreen warnings (Windows):** Unsigned executables often trigger Microsoft Defender SmartScreen (“Windows protected your PC”). Click “More info” and “Run anyway” only if you trust the binary source (your build or the official release). Consider signing the executable with your organization’s certificate for widespread deployment.
+- **Windows UAC scope:** The first scan after launching Rogue Finder spawns the privileged Nmap runner via a single UAC consent dialog. Subsequent scans reuse the same helper until you exit the GUI. If you prefer the legacy single-process behavior, set `runtime.windows_privileged_runner: false` in the configuration file (the GUI will then require full elevation to access raw sockets).
 - **Gatekeeper quarantine (macOS):** Finder marks downloads with `com.apple.quarantine`, so double-clicking the app may display “rogue-finder cannot be opened because it is from an unidentified developer.” Open **Terminal** in the download directory and run `xattr -dr com.apple.quarantine ./rogue-finder` (replace the path as needed), or right-click → **Open** twice to whitelist the binary.
 - **Antivirus exclusions:** Some security suites throttle Nmap subprocesses. If scans consistently time out, temporarily allow `nmap.exe` and `rogue-finder.exe` or run from an approved workstation.
 - **Data handling:** Exported CSV/JSON files include full score breakdowns and error logs. Treat them as sensitive because they may reveal internal hostnames or service exposure.

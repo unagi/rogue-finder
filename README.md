@@ -10,6 +10,7 @@ PySide6 desktop application that orchestrates lightweight Nmap discovery jobs, r
 **Highlights**
 - ICMP, targeted port, OS, and safe-script phases launched through the local `nmap` binary (never bundled).
 - Cross-platform (Windows/macOS/Linux) with PyInstaller packaging artifacts published by GitHub Actions.
+- Optional Windows-only privileged runner keeps the GUI unelevated while a spawned helper receives the single UAC prompt and runs all Nmap phases via named-pipe IPC.
 - Deterministic scoring engine with CSV/JSON exports containing score breakdowns and error context.
 
 ## Quick Links
@@ -49,6 +50,13 @@ PySide6 desktop application that orchestrates lightweight Nmap discovery jobs, r
 4. Review prioritized results (High/Medium/Low) and export CSV/JSON or run Safe Script diagnostics.
 5. For full instructions and FAQs, see the English/Japanese user manuals.
 
+## Windows Privileged Runner
+- Windows builds now ship a dual-mode executable: the default GUI (`--mode gui`) stays in the user session while a helper launched with `--mode runner` receives the single UAC prompt and executes all Nmap phases. Both entry points live inside the same PyInstaller binary so distribution remains one file.
+- The GUI and runner communicate exclusively through authenticated Windows named pipes; logs, progress, and results stream over that channel, keeping cancellation just as responsive as the legacy design.
+- The helper remains alive for the duration of the GUI session, so the UAC consent dialog only appears the first time a scan kicks off (or if you stop and restart the helper manually). Closing the GUI tears down the privileged child automatically.
+- Control the behavior via `rogue-finder.config.yaml` → `runtime.windows_privileged_runner` (default `true`). Set it to `false` if corporate policy forbids elevation prompts or when you prefer the historical single-process flow (macOS/Linux always run in that mode regardless of the flag).
+- Power users rarely need to invoke `--mode runner` directly; the GUI passes `--ipc-name` and `--ipc-token` automatically when launching the helper. The flag is documented here for completeness and for future automation hooks.
+
 ## Rating Model Overview
 The rules that previously lived in `nmap_gui_system_spec.md` are summarized here for convenience:
 
@@ -69,6 +77,7 @@ Key sections:
 - `rating` – ICMP/port/OS weights plus combo bonuses and priority thresholds.
 - `ui` – priority row colors.
 - `safe_scan` – Safe Script concurrency, timeout, and ETA smoothing knobs.
+- `runtime` – Windows-specific toggles such as `windows_privileged_runner` (default `true`).
 
 Generate a fresh template anytime:
 ```bash
@@ -80,7 +89,7 @@ For the full component map see [`docs/architecture_overview.md`](docs/architectu
 
 - `src/nmap_gui/main.py` boots `QApplication`, parses CLI flags, and shows `MainWindow`.
 - Widgets under `src/nmap_gui/gui/` collect targets, display results, and emit `ScanConfig` objects without blocking the GUI thread.
-- `src/nmap_gui/scan_manager.py` and `process.py` fan-out jobs to a `ProcessPoolExecutor` using the `spawn` context so Windows/macOS builds behave consistently.
+- `src/nmap_gui/scan_manager.py` coordinates work through `ScanJobExecutor`, which falls back to threads on macOS/Windows for stability. When `runtime.windows_privileged_runner` is enabled, a named-pipe connected helper process runs Nmap with UAC elevation while the GUI stays unelevated.
 - `src/nmap_gui/nmap_runner.py` executes ICMP/port/OS/safe-script phases, adapts to privilege limitations, and parses XML into `models.HostScanResult`.
 - `rating.py`, `exporters.py`, and `job_eta.py` provide scoring, CSV/JSON output, and ETA calculations consumed by the GUI and tests.
 
