@@ -28,6 +28,9 @@ def config_file_path(config_path: Path | str | None = None) -> Path:
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "version": 1,
+    "runtime": {
+        "windows_privileged_runner": True,
+    },
     "scan": {
         "default_timeout_seconds": 300,
         "fast_port_scan_list": [
@@ -180,11 +183,17 @@ class SafeScanSettings:
 
 
 @dataclass(frozen=True)
+class RuntimeSettings:
+    windows_privileged_runner: bool
+
+
+@dataclass(frozen=True)
 class AppSettings:
     scan: ScanSettings
     rating: RatingSettings
     ui: UiSettings
     safe_scan: SafeScanSettings
+    runtime: RuntimeSettings
     raw: dict[str, Any]
 
 
@@ -287,7 +296,22 @@ def _build_settings(data: dict[str, Any]) -> AppSettings:
     rating = _build_rating_settings(data.get("rating", {}))
     ui = _build_ui_settings(data.get("ui", {}))
     safe_scan = _build_safe_scan_settings(data.get("safe_scan", {}))
-    return AppSettings(scan=scan, rating=rating, ui=ui, safe_scan=safe_scan, raw=data)
+    runtime = _build_runtime_settings(data.get("runtime", {}))
+    return AppSettings(
+        scan=scan,
+        rating=rating,
+        ui=ui,
+        safe_scan=safe_scan,
+        runtime=runtime,
+        raw=data,
+    )
+
+
+def build_settings_from_raw(data: dict[str, Any]) -> AppSettings:
+    """Public helper to construct AppSettings from raw dictionary values."""
+
+    merged = _merge_with_defaults(copy.deepcopy(DEFAULT_SETTINGS), data)
+    return _build_settings(merged)
 
 
 def _build_scan_settings(data: dict[str, Any]) -> ScanSettings:
@@ -395,6 +419,12 @@ def _build_safe_scan_settings(data: dict[str, Any]) -> SafeScanSettings:
     )
 
 
+def _build_runtime_settings(data: dict[str, Any]) -> RuntimeSettings:
+    defaults = DEFAULT_SETTINGS["runtime"]
+    flag = bool(data.get("windows_privileged_runner", defaults["windows_privileged_runner"]))
+    return RuntimeSettings(windows_privileged_runner=flag)
+
+
 def main() -> None:  # pragma: no cover - CLI helper
     parser = argparse.ArgumentParser(description="Rogue Finder configuration utilities")
     parser.add_argument(
@@ -426,9 +456,11 @@ __all__ = [
     "ComboRule",
     "ConfigurationError",
     "RatingSettings",
+    "RuntimeSettings",
     "SafeScanSettings",
     "ScanSettings",
     "UiSettings",
+    "build_settings_from_raw",
     "config_file_path",
     "get_settings",
     "load_settings",
