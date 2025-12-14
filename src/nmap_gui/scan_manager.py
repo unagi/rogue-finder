@@ -21,15 +21,15 @@ from multiprocessing.connection import Connection
 
 from PySide6.QtCore import QObject, QThread, Signal, Slot
 
-from .cancel_token import PipeCancelToken, create_pipe_cancel_token
-from .config import AppSettings, get_settings
-from .error_codes import (
+from .errors import (
     ERROR_SCAN_CRASHED,
     ERROR_WORKER_POOL_FAILED,
     build_error,
 )
+from .infrastructure.config import AppSettings, get_settings
 from .models import ScanConfig, ScanLogEvent
 from .nmap_runner import run_full_scan, run_safe_script_scan
+from .process import PipeCancelToken, create_pipe_cancel_token
 
 
 def _send_log_event(connection: Connection | None, event: ScanLogEvent) -> None:

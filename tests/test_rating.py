@@ -5,7 +5,7 @@ from dataclasses import replace
 
 import pytest
 
-from nmap_gui.config import DEFAULT_SETTINGS, ComboRule, get_settings
+from nmap_gui.infrastructure.config import DEFAULT_SETTINGS, ComboRule, get_settings
 from nmap_gui.models import HostScanResult
 from nmap_gui.rating import apply_rating, classify_os_guess
 

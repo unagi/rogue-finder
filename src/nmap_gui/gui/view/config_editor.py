@@ -19,15 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...config import (
-    AppSettings,
-    config_file_path,
-    get_settings,
-    load_settings,
-    merge_with_defaults,
-    reset_settings_cache,
-    write_settings,
-)
+from ..controller.config_controller import ConfigController
 
 Translator = Callable[[str], str]
 
@@ -35,18 +27,20 @@ Translator = Callable[[str], str]
 class ConfigEditorDialog(QDialog):
     """Simple YAML-based configuration editor."""
 
-    settingsUpdated = Signal(AppSettings)
+    settingsUpdated = Signal(object)  # emits AppSettings instances
 
     def __init__(
         self,
         translator: Translator,
         parent: QWidget | None = None,
         *,
+        controller: ConfigController,
         config_path: Path | str | None = None,
     ) -> None:
         super().__init__(parent)
         self._t = translator
-        self._path = config_file_path(config_path)
+        self._controller = controller
+        self._path = self._controller.resolve_path(config_path)
         self._dirty = False
         self._suppress_changes = False
         self._build_ui()
@@ -100,7 +94,7 @@ class ConfigEditorDialog(QDialog):
 
     def reload_from_disk(self) -> None:
         try:
-            settings = load_settings(self._path)
+            settings = self._controller.load_settings(self._path)
         except Exception as exc:
             QMessageBox.critical(
                 self,
@@ -141,10 +135,10 @@ class ConfigEditorDialog(QDialog):
                 self._t("config_editor_yaml_error_body").format(error=str(exc)),
             )
             return
-        merged = merge_with_defaults(parsed)
+        merged = self._controller.merge_with_defaults(parsed)
         serialized = yaml.safe_dump(merged, sort_keys=False)
         try:
-            success = write_settings(merged, self._path)
+            success = self._controller.write_settings(merged, self._path)
         except Exception as exc:
             QMessageBox.critical(
                 self,
@@ -164,8 +158,8 @@ class ConfigEditorDialog(QDialog):
         self._set_status(
             self._t("config_editor_status_saved").format(path=str(self._path))
         )
-        reset_settings_cache()
-        new_settings = get_settings()
+        self._controller.reset_cache()
+        new_settings = self._controller.current_settings()
         self.settingsUpdated.emit(new_settings)
 
     def closeEvent(self, event) -> None:  # type: ignore[override]

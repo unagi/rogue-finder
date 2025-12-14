@@ -6,7 +6,7 @@ This document summarizes the moving pieces inside Rogue Finder so contributors c
 
 1. **Entry point** – `python -m nmap_gui.main` (or `src/nmap_gui/main.py`) builds an `argparse` interface (`--debug` flag), instantiates `QApplication`, and shows `MainWindow`.
 2. **Main window** – `src/nmap_gui/gui/main_window.py` wires top-level widgets (target input, scan controls, results grid, safe diagnostics). It emits `ScanConfig` objects via Qt signals whenever the user starts discovery or diagnostics jobs.
-3. **Scan bridge** – `src/nmap_gui/scan_manager.py` listens to GUI events, translates them into background work items, and fan-outs execution to a `ProcessPoolExecutor` created with the `spawn` context (so Windows builds stay stable). Cancellation toggles a shared `multiprocessing.Event` from `cancel_token.py`.
+3. **Scan bridge** – `src/nmap_gui/scan_manager.py` listens to GUI events, translates them into background work items, and fan-outs execution to a `ProcessPoolExecutor` created with the `spawn` context (so Windows builds stay stable). Cancellation toggles a shared `multiprocessing.Event` from `process.py`.
 4. **Worker phase** – Each process executes `nmap_runner.run_full_scan`, which orchestrates ICMP discovery, targeted TCP SYN/TCP connect scans, optional OS fingerprinting, and safe-script jobs. XML outputs are parsed into `models.HostScanResult` objects, rated, and streamed back to the GUI thread.
 5. **Result presentation** – `result_grid.py` plus the supporting widgets in `src/nmap_gui/gui/` render the table, score breakdown, actions, and safe diagnostics dialogs. Export buttons call `exporters.export_csv/json`.
 
@@ -19,7 +19,7 @@ This document summarizes the moving pieces inside Rogue Finder so contributors c
 | `gui/summary_panel.py` & `gui/result_grid.py` | Display scan progress, scores, and actionable rows. |
 | `gui/safe_scan_controller.py`, `safe_scan_dialog.py`, `safe_scan_report_viewer.py` | Manage Safe Script diagnostics, concurrency limits, report display, and export. |
 | `gui/config_editor.py` | Optional YAML editor launched from the GUI to tweak `rogue-finder.config.yaml`. |
-| `gui/state_controller.py` & `state_store.py` | Persist UI state (window size, column order, etc.) between sessions. |
+| `gui/state_controller.py` & `infrastructure/state/store.py` | Persist UI state (window size, column order, etc.) between sessions. |
 
 All widgets communicate via Qt signals/slots so the GUI thread stays responsive while background scans run.
 
@@ -32,8 +32,8 @@ All widgets communicate via Qt signals/slots so the GUI thread stays responsive 
 
 ## Configuration & Persistence
 
-- `config.py` loads/creates `rogue-finder.config.yaml`, merges user overrides with defaults, and exposes helpers to dump an up-to-date template (`python -m nmap_gui.config --write-default`).
-- `storage_warnings.py` surfaces helpful alerts when the app lacks write permissions for config/export paths.
+- `infrastructure/config.py` loads/creates `rogue-finder.config.yaml`, merges user overrides with defaults, and exposes helpers to dump an up-to-date template (`python -m nmap_gui.infrastructure.config --write-default`).
+- `infrastructure/state/storage_warnings.py` surfaces helpful alerts when the app lacks write permissions for config/export paths.
 - `i18n.py` holds localized strings used in GUI labels and dialogs (English + Japanese coverage for the manuals).
 
 ## Packaging Considerations

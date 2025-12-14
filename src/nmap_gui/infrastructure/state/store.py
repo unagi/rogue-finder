@@ -8,7 +8,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .models import HostScanResult
+from ...models import HostScanResult
 from .storage_warnings import record_storage_warning
 
 LOGGER = logging.getLogger(__name__)

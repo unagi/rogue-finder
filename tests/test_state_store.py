@@ -5,14 +5,14 @@ import pickle
 from pathlib import Path
 from types import SimpleNamespace
 
-import nmap_gui.state_store as state_store_module
-from nmap_gui.state_store import (
+import nmap_gui.infrastructure.state.store as state_store_module
+from nmap_gui.infrastructure.state import (
     CURRENT_STATE_VERSION,
     AppState,
+    consume_storage_warnings,
     load_state,
     save_state,
 )
-from nmap_gui.storage_warnings import consume_storage_warnings
 
 
 def test_save_and_load_round_trip(tmp_path) -> None:

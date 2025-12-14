@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QObject, Signal
 
-from .config import AppSettings, get_settings
+from .infrastructure.config import AppSettings, get_settings
 from .models import ScanLogEvent
 from .scan_manager import (
     SafeScriptCallbacks,

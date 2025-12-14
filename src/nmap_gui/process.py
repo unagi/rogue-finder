@@ -28,3 +28,6 @@ def create_pipe_cancel_token(context) -> tuple[Connection, PipeCancelToken]:
 
     rx, tx = context.Pipe(duplex=False)
     return tx, PipeCancelToken(rx)
+
+
+__all__ = ["PipeCancelToken", "create_pipe_cancel_token"]

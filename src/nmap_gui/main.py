@@ -24,9 +24,9 @@ except ImportError:  # pragma: no cover - fallback for direct script execution
     from nmap_gui.gui import MainWindow
 
 try:
-    from .config import ConfigurationError, get_settings
+    from .infrastructure.config import ConfigurationError, get_settings
 except ImportError:  # pragma: no cover - mirrors gui fallback for PyInstaller
-    from nmap_gui.config import ConfigurationError, get_settings
+    from nmap_gui.infrastructure.config import ConfigurationError, get_settings
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
