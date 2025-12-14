@@ -9,9 +9,13 @@ from nmap_gui import main as entry
 
 
 def _stub_app_icon(monkeypatch, icon):
-    module = types.ModuleType("nmap_gui.gui.app_icon")
-    module.load_app_icon = lambda: icon
-    monkeypatch.setitem(sys.modules, "nmap_gui.gui.app_icon", module)
+    def _install(module_name: str) -> None:
+        module = types.ModuleType(module_name)
+        module.load_app_icon = lambda: icon
+        monkeypatch.setitem(sys.modules, module_name, module)
+
+    _install("nmap_gui.gui.app_icon")
+    _install("nmap_gui.gui.view.app_icon")
 
 
 def test_build_arg_parser_includes_debug_flag():
