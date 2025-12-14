@@ -1,6 +1,36 @@
 # Changelog
 
 All notable changes to this project are documented here. The file is regenerated automatically by git-cliff based on commit history and pull request titles.
+## 0.2.3 - 2025-12-14
+
+
+### Documentation
+- docs: update changelog for v0.2.2 (8bf09bf)
+
+
+
+### Features
+- Add Windows privileged runner backend (54f7cb9)
+
+
+
+### Fixes
+- Fix privileged runner flow and lint (64299d2)
+
+
+
+### Other
+- Revert Windows privileged runner split (cde8f51)
+
+
+
+### Refactors
+- Refactor scan orchestration layers (865c98f)
+- Refactor i18n catalogs and tests (bfcc269)
+- Refactor modules to infrastructure package (4d33966)
+- Refactor MainWindow controller wiring (eb198d6)
+
+
 ## 0.2.2 - 2025-12-13
 
 
