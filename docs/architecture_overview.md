@@ -25,7 +25,7 @@ All widgets communicate via Qt signals/slots so the GUI thread stays responsive 
 
 ## Background Services
 
-- **Scan scheduling:** `scan_manager.py` batches targets based on selected phases, enforces per-mode worker limits, calculates ETAs via `infrastructure/eta/job_eta.py`, and feeds workers in a backpressure-aware loop.
+- **Scan scheduling:** `scan_manager.py` batches targets based on selected phases, enforces per-mode worker limits, calculates ETAs via `job_eta.py`, and feeds workers in a backpressure-aware loop.
 - **Nmap integration:** `nmap_runner.py` composes the correct command line per platform/privilege level. On macOS (non-root) it automatically downgrades to TCP ping (`-PA`) and TCP connect (`-sT`) scans and skips OS fingerprinting to avoid raw-socket errors. Errors are encoded as `HostScanResult.errors`.
 - **Rating engine:** `rating.py` houses `PORT_WEIGHTS`, combo bonuses, OS heuristics, and priority bands. It returns both the numeric score and the structured `ScoreBreakdown` used for table tooltips and exports.
 - **Safe diagnostics:** When a user runs Safe Script from the GUI, `safe_scan_controller.py` enqueues jobs capped by `safe_scan.max_parallel`. Each job calls the dedicated mode inside `nmap_runner.py` to launch `nmap --script safe`, gather stdout/stderr, and persist the transcript.

@@ -12,16 +12,11 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QFileDialog, QMainWindow, QMessageBox, QVBoxLayout, QWidget
 
 from ...exporters import export_csv, export_json
+from ...eta import EstimatorConfig, ParallelJobTimeEstimator, TaskSpec, WorkBasedEstimator
 from ...i18n import detect_language, format_error_list, format_error_record, translate
 from ...infrastructure.config import AppSettings, get_settings
-from ...infrastructure.eta import (
-    EstimatorConfig,
-    JobEtaController,
-    ParallelJobTimeEstimator,
-    TaskSpec,
-    WorkBasedEstimator,
-)
 from ...infrastructure.state import AppState
+from ...job_eta import JobEtaController
 from ...models import (
     ErrorRecord,
     HostScanResult,

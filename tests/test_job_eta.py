@@ -7,7 +7,8 @@ from types import SimpleNamespace
 import pytest
 from PySide6.QtCore import QCoreApplication
 
-from nmap_gui.infrastructure.eta import JobEtaController, job_eta
+import nmap_gui.job_eta as job_eta
+from nmap_gui.job_eta import JobEtaController
 
 EXPECTED_SECONDS = 5.0
 EXPECTED_REFRESH_COUNT = 2
