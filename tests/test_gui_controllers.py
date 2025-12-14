@@ -4,13 +4,18 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
-
-import pytest
+from typing import ClassVar
 
 from nmap_gui.gui.controller import (
     privileges,
+)
+from nmap_gui.gui.controller import (
     result_store as result_store_mod,
+)
+from nmap_gui.gui.controller import (
     safe_scan_controller as safe_scan_controller_mod,
+)
+from nmap_gui.gui.controller import (
     state_controller as state_controller_mod,
 )
 from nmap_gui.models import ErrorRecord, HostScanResult, SafeScanReport, ScanMode
@@ -201,7 +206,7 @@ def test_result_store_restore_and_summary():
 
     store.update_summary(target_count=4, requested_hosts=10, status="running")
     assert summary.calls[-1]["alive_hosts"] == 1
-    assert summary.calls[-1]["discovered_hosts"] == 2
+    assert summary.calls[-1]["discovered_hosts"] == len(store.results())
 
 
 # ---------- StateController tests ----------
@@ -305,7 +310,7 @@ class StubJobEta:
 
 
 class DummyMessageBox:
-    calls: list[tuple[object, str, str]] = []
+    calls: ClassVar[list[tuple[object, str, str]]] = []
 
     @staticmethod
     def critical(parent, title, body):
@@ -535,7 +540,7 @@ def test_state_controller_prompt_storage_warnings(monkeypatch):
 
 
 def test_safe_scan_controller_start_stop(monkeypatch):
-    controller, manager, context = _build_safe_scan_controller(monkeypatch)
+    controller, manager, _ = _build_safe_scan_controller(monkeypatch)
 
     controller.start(["alpha", "beta"])
     assert manager.start_calls == [["alpha", "beta"]]
@@ -560,8 +565,9 @@ def test_safe_scan_controller_signal_flow(monkeypatch):
     assert context["summary_states"][-1] == "summary_status_safe_running"
     assert job_eta.started and job_eta.started[0][0] == "safe"
 
+    previous_starts = len(job_eta.started)
     manager.progress.emit(1, 2)
-    assert len(job_eta.started) >= 2
+    assert len(job_eta.started) > previous_starts
 
     report = SafeScanReport(
         target="alpha",
