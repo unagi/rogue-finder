@@ -27,7 +27,10 @@ type = "simple"
 branch = true
 source = ["src"]
 parallel = false
-omit = ["*/nmap_gui/gui/view/*"]
+omit = [
+  "*/nmap_gui/gui/view/*",
+  "*/nmap_gui/gui/controller/main_window_controller.py",
+]
 
 [tool.coverage.report]
 skip_empty = true

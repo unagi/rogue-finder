@@ -1,0 +1,754 @@
+"""Controller managing the MainWindow business logic."""
+from __future__ import annotations
+
+import ipaddress
+import sys
+import time
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from datetime import datetime
+from typing import TYPE_CHECKING
+
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QFileDialog, QMainWindow, QMessageBox
+
+from ...eta import EstimatorConfig, ParallelJobTimeEstimator, TaskSpec, WorkBasedEstimator
+from ...i18n import format_error_list, format_error_record
+from ...infrastructure.exporters import export_csv, export_json
+from ...job_eta import JobEtaController
+from ...models import (
+    ErrorRecord,
+    HostScanResult,
+    SafeScanReport,
+    ScanConfig,
+    ScanLogEvent,
+    ScanMode,
+    sanitize_targets,
+)
+from ...scan_controller import ScanController
+from ..view.config_editor import ConfigEditorDialog
+from ..view.export_toolbar import ExportToolbar
+from ..view.result_grid import ResultGrid
+from ..view.safe_scan_report_viewer import SafeScanReportViewer
+from ..view.scan_controls import ScanControlsPanel, ScanControlsState
+from ..view.scan_log_dialog import ScanLogDialog
+from ..view.summary_panel import SummaryPanel
+from .config_controller import ConfigController
+from .privileges import has_required_privileges, show_privileged_hint
+from .result_store import ResultStore
+from .safe_scan_controller import SafeScanController
+from .state_controller import StateController
+
+if TYPE_CHECKING:
+    from ...infrastructure.config import AppSettings
+    from ...infrastructure.state import AppState
+
+Translator = Callable[[str], str]
+
+
+@dataclass(slots=True)
+class MainWindowDependencies:
+    window: QMainWindow
+    settings: AppSettings
+    translator: Translator
+    language: str
+    controls: ScanControlsPanel
+    result_grid: ResultGrid
+    summary_panel: SummaryPanel
+    export_toolbar: ExportToolbar
+    report_viewer: SafeScanReportViewer
+    job_eta: JobEtaController
+
+
+class MainWindowController:
+    """Encapsulates the MainWindow behaviours that aren't strictly view-related."""
+
+    def __init__(self, deps: MainWindowDependencies) -> None:
+        self._window = deps.window
+        self._settings = deps.settings
+        self._translator = deps.translator
+        self._language = deps.language
+        self._controls = deps.controls
+        self._result_grid = deps.result_grid
+        self._summary_panel = deps.summary_panel
+        self._export_toolbar = deps.export_toolbar
+        self._report_viewer = deps.report_viewer
+        self._job_eta = deps.job_eta
+        self._state_controller = StateController(self._translator)
+        self._result_store = ResultStore(self._result_grid, self._summary_panel)
+        self._scan_manager = ScanController(self._settings)
+        self._config_controller = ConfigController()
+        self._safe_scan_controller = self._create_safe_scan_controller()
+        self._target_count = 0
+        self._requested_host_estimate = 0
+        self._summary_status = self._t("summary_status_idle")
+        self._summary_has_error = False
+        self._scan_active = False
+        self._pending_scan_configs: list[ScanConfig] = []
+        self._active_scan_kind: str | None = None
+        self._current_scan_targets: list[str] = []
+        self._log_dialog: ScanLogDialog | None = None
+        self._config_editor: ConfigEditorDialog | None = None
+        self._fast_eta: WorkBasedEstimator | None = None
+        self._fast_task_specs: dict[str, TaskSpec] = {}
+        self._fast_completed_targets: set[str] = set()
+        self._fast_total_work = 0.0
+        self._advanced_eta: ParallelJobTimeEstimator | None = None
+        self._advanced_eta_last_refresh: float | None = None
+        self._state_save_timer = QTimer(self._window)
+        self._state_save_timer.setSingleShot(True)
+        self._state_save_timer.setInterval(750)
+        self._state_save_timer.timeout.connect(self._persist_state)
+        self._setup_scan_manager()
+        self._connect_signals()
+        self._init_fast_eta_state()
+
+    def initialize(self, state: AppState | None) -> bool:
+        self._state_controller.initialize(state)
+        self._state_controller.apply(
+            window=self._window,
+            controls=self._controls,
+            result_store=self._result_store,
+            result_grid=self._result_grid,
+        )
+        self._update_summary()
+        self._update_mac_limited_label()
+        return self._state_controller.prompt_storage_warnings(self._window)
+
+    def handle_close_event(self) -> bool:
+        self._scan_manager.stop()
+        self._safe_scan_controller.stop()
+        if self._log_dialog:
+            self._log_dialog.deleteLater()
+            self._log_dialog = None
+        self._controls.set_log_enabled(False)
+        self._state_save_timer.stop()
+        return self._persist_state(on_close=True)
+
+    # Remaining methods ported from the original MainWindow implementation
+    def _setup_scan_manager(self) -> None:
+        self._scan_manager.started.connect(self._on_scan_started)
+        self._scan_manager.progress.connect(self._on_progress)
+        self._scan_manager.result_ready.connect(self._on_result)
+        self._scan_manager.error.connect(self._on_error)
+        self._scan_manager.finished.connect(self._on_finished)
+        self._scan_manager.log_ready.connect(self._on_log_event)
+
+    def _connect_signals(self) -> None:
+        self._controls.start_requested.connect(self._on_start_clicked)
+        self._controls.stop_requested.connect(self._on_stop_clicked)
+        self._controls.clear_requested.connect(self._on_clear_results)
+        self._controls.log_requested.connect(self._on_show_log_clicked)
+        self._controls.config_editor_requested.connect(self._on_edit_config_requested)
+        self._result_grid.selectionChanged.connect(self._on_result_grid_selection_changed)
+        self._result_grid.runAdvancedRequested.connect(self._on_run_advanced_clicked)
+        self._result_grid.runSafetyRequested.connect(self._on_run_safety_clicked)
+        self._result_grid.diagnosticsViewRequested.connect(self._on_diagnostics_view_requested)
+        self._export_toolbar.export_csv_requested.connect(self._export_csv)
+        self._export_toolbar.export_json_requested.connect(self._export_json)
+        self._controls.targets_changed.connect(self._on_form_state_changed)
+
+    def _estimate_requested_hosts(self, targets: Sequence[str]) -> int:
+        total = 0
+        for entry in targets:
+            total += self._estimate_hosts_for_target(entry)
+        return total
+
+    def _estimate_hosts_for_target(self, target: str) -> int:
+        try:
+            network = ipaddress.ip_network(target, strict=False)
+        except ValueError:
+            return 1
+        return network.num_addresses
+
+    def _create_safe_scan_controller(self) -> SafeScanController:
+        return SafeScanController(
+            settings=self._settings,
+            translator=self._translator,
+            parent=self._window,
+            job_eta=self._job_eta,
+            status_callback=self._window.statusBar().showMessage,
+            set_summary_state=self._set_summary_state,
+            refresh_actions=self._refresh_action_buttons,
+            is_scan_active=lambda: self._scan_active,
+            set_diagnostics_status=self._set_diagnostics_status,
+            clear_safety_selection=self._result_grid.clear_safety_selection_for_target,
+            store_diagnostics_report=self._store_diagnostics_report,
+        )
+
+    def _init_fast_eta_state(self) -> None:
+        self._fast_eta = None
+        self._fast_task_specs = {}
+        self._fast_completed_targets = set()
+        self._fast_total_work = 0.0
+
+    def _prepare_fast_scan_state(self, targets: Sequence[str]) -> None:
+        self._stop_fast_eta()
+        specs, total_work = self._build_fast_task_specs(targets)
+        self._fast_task_specs = specs
+        self._fast_total_work = total_work
+        self._fast_completed_targets = set()
+        self._result_grid.configure_fast_progress(len(targets), total_work)
+
+    def _build_fast_task_specs(self, targets: Sequence[str]) -> tuple[dict[str, TaskSpec], float]:
+        specs: dict[str, TaskSpec] = {}
+        total_work = 0.0
+        for target in targets:
+            work = float(max(self._estimate_hosts_for_target(target), 1))
+            specs[target] = TaskSpec(task_id=target, size=work)
+            total_work += work
+        return specs, total_work
+
+    def _start_fast_eta(self, targets: Sequence[str]) -> None:
+        if not self._fast_task_specs:
+            return
+        rate = self._fast_initial_rate(self._fast_total_work)
+        self._fast_eta = WorkBasedEstimator(worker_count=1, initial_rate=rate, alpha=0.3)
+        estimate = self._fast_eta.estimate_before_start(self._fast_task_specs.values())
+        self._result_grid.start_fast_progress(estimate.estimate_sec)
+        if estimate.estimate_sec > 0:
+            self._job_eta.start(
+                kind="fast",
+                expected_seconds=estimate.estimate_sec,
+                message_builder=self._build_fast_eta_message,
+            )
+        else:
+            self._job_eta.stop("fast")
+
+    def _fast_initial_rate(self, total_work: float) -> float:
+        base_rate = 1.0 / 3.0
+        scale = 0.06
+        dynamic = base_rate + scale * max(total_work - 1.0, 0.0)
+        return min(max(dynamic, base_rate), 30.0)
+
+    def _update_summary(self) -> None:
+        self._result_store.update_summary(
+            target_count=self._target_count,
+            requested_hosts=self._requested_host_estimate,
+            status=self._summary_status,
+        )
+
+    def _set_summary_state(self, translation_key: str) -> None:
+        self._summary_status = self._t(translation_key)
+        self._update_summary()
+
+    def _begin_scan_session(self, *, kind: str, targets: Sequence[str]) -> None:
+        self._pending_scan_configs = []
+        self._active_scan_kind = kind
+        self._current_scan_targets = list(targets)
+        self._scan_active = True
+        self._update_controls_state()
+
+    def _clear_scan_session(self) -> None:
+        self._pending_scan_configs.clear()
+        self._active_scan_kind = None
+        self._current_scan_targets = []
+        self._scan_active = False
+        self._update_controls_state()
+
+    def _stop_all_eta(self) -> None:
+        self._job_eta.stop("advanced")
+        self._job_eta.stop("fast")
+        self._stop_fast_eta()
+        self._reset_advanced_eta()
+
+    def _on_start_clicked(self) -> None:
+        targets = list(dict.fromkeys(sanitize_targets(self._controls.targets_text())))
+        if not targets:
+            QMessageBox.warning(
+                self._window,
+                self._t("missing_targets_title"),
+                self._t("missing_targets_body"),
+            )
+            return
+        self._target_count = len(targets)
+        self._requested_host_estimate = self._estimate_requested_hosts(targets)
+        self._summary_has_error = False
+        self._reset_result_storage(emit_selection_changed=False)
+        self._prepare_fast_scan_state(targets)
+        self._set_summary_state("summary_status_scanning")
+        config = ScanConfig(
+            targets=targets,
+            scan_modes={ScanMode.ICMP, ScanMode.PORTS},
+            port_list=self._settings.scan.fast_port_scan_list,
+            timeout_seconds=self._settings.scan.default_timeout_seconds,
+            detail_label="fast",
+        )
+        self._begin_scan_session(kind="fast", targets=targets)
+        self._ensure_log_dialog(targets, show=False, reset=True)
+        self._scan_manager.start(config)
+        self._start_fast_eta(targets)
+        self._window.statusBar().showMessage(
+            self._t("fast_scan_running_status").format(
+                count=self._target_count,
+                hosts=self._requested_host_estimate,
+            )
+        )
+        self._refresh_action_buttons()
+
+    def _on_clear_results(self) -> None:
+        if self._scan_active or self._safe_scan_controller.is_active():
+            QMessageBox.information(
+                self._window,
+                self._t("clear_blocked_title"),
+                self._t("clear_blocked_body"),
+            )
+            return
+        if not self._result_store.has_results():
+            return
+        reply = QMessageBox.question(
+            self._window,
+            self._t("clear_results_title"),
+            self._t("clear_results_body"),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+        self._reset_result_storage()
+        self._set_summary_state("summary_status_idle")
+        self._on_form_state_changed()
+        self._refresh_action_buttons()
+
+    def _on_run_advanced_clicked(self, include_os: bool = False) -> None:
+        if self._scan_active or self._safe_scan_controller.is_active():
+            QMessageBox.information(
+                self._window,
+                self._t("advanced_blocked_title"),
+                self._t("advanced_blocked_body"),
+            )
+            return
+        advanced_targets = self._result_grid.advanced_targets()
+        if not advanced_targets:
+            QMessageBox.information(
+                self._window,
+                self._t("advanced_missing_title"),
+                self._t("advanced_missing_body"),
+            )
+            return
+        if include_os and not has_required_privileges({ScanMode.OS}):
+            show_privileged_hint(self._window, self._translator)
+            return
+        targets = sorted(advanced_targets)
+        config = self._build_advanced_config(targets, include_os=include_os)
+        self._begin_scan_session(kind="advanced", targets=config.targets)
+        self._window.statusBar().showMessage(self._t("advanced_running_status"))
+        self._set_summary_state("summary_status_advanced")
+        self._announce_advanced_eta(len(config.targets))
+        self._ensure_log_dialog(config.targets, show=False, reset=True)
+        self._result_grid.reset_progress(len(config.targets))
+        self._scan_manager.start(config)
+        self._refresh_action_buttons()
+
+    def _on_run_safety_clicked(self) -> None:
+        if self._scan_active:
+            QMessageBox.information(
+                self._window,
+                self._t("safe_scan_blocked_title"),
+                self._t("safe_scan_blocked_body"),
+            )
+            return
+        if self._safe_scan_controller.is_active() or self._safe_scan_controller.is_running():
+            QMessageBox.information(
+                self._window,
+                self._t("safe_scan_running_title"),
+                self._t("safe_scan_running_body"),
+            )
+            return
+        safety_selection = self._result_grid.safety_targets()
+        if not safety_selection:
+            QMessageBox.information(
+                self._window,
+                self._t("safe_scan_missing_title"),
+                self._t("safe_scan_missing_body"),
+            )
+            return
+        targets = sorted(safety_selection)
+        for target in targets:
+            self._set_diagnostics_status(target, "running")
+        self._safe_scan_controller.start(targets)
+
+    def _on_show_log_clicked(self) -> None:
+        if not self._log_dialog:
+            return
+        self._log_dialog.show()
+        self._log_dialog.raise_()
+        self._log_dialog.activateWindow()
+
+    def _on_stop_clicked(self) -> None:
+        self._scan_manager.stop()
+        self._result_grid.finish_progress()
+        self._clear_scan_session()
+        self._window.statusBar().showMessage(self._t("scan_stopped"))
+        self._set_summary_state("summary_status_stopped")
+        self._stop_all_eta()
+        self._refresh_action_buttons()
+        if self._log_dialog:
+            self._log_dialog.mark_scan_finished()
+
+    def _on_scan_started(self, total: int) -> None:
+        self._result_grid.reset_progress(total)
+
+    def _on_progress(self, done: int, total: int) -> None:
+        fast_handled = (
+            self._active_scan_kind == "fast"
+            and self._result_grid.handle_fast_progress_update(done, total)
+        )
+        if fast_handled:
+            return
+        self._result_grid.set_progress(done, total)
+        if self._active_scan_kind == "advanced":
+            remaining = max(total - done, 0)
+            self._refresh_advanced_eta_timer(remaining)
+
+    def _on_result(self, result: HostScanResult) -> None:
+        if self._active_scan_kind == "advanced":
+            self._handle_advanced_result(result)
+        else:
+            self._handle_fast_result(result)
+        self._update_summary()
+        self._on_form_state_changed()
+
+    def _reset_result_storage(self, *, emit_selection_changed: bool = True) -> None:
+        self._result_store.reset(emit_selection_changed=emit_selection_changed)
+        self._update_mac_limited_label()
+        self._report_viewer.close()
+
+    def _on_result_grid_selection_changed(self) -> None:
+        self._refresh_action_buttons()
+        self._on_form_state_changed()
+
+    def _set_diagnostics_status(self, target: str, status: str) -> None:
+        timestamp = datetime.now().astimezone().isoformat()
+        self._result_store.set_diagnostics_status(target, status, timestamp)
+
+    def _store_diagnostics_report(self, report: SafeScanReport) -> None:
+        self._result_store.set_diagnostics_report(report.target, report)
+        should_show = (not self._report_viewer.isVisible()) or (
+            self._report_viewer.current_target() == report.target
+        )
+        if should_show:
+            self._report_viewer.show_report(report)
+
+    def _on_diagnostics_view_requested(self, target: str) -> None:
+        report = self._result_store.diagnostics_report_for(target)
+        if report is None:
+            QMessageBox.information(
+                self._window,
+                self._t("diagnostics_viewer_missing_title"),
+                self._t("diagnostics_viewer_missing_body").format(target=target),
+            )
+            return
+        self._report_viewer.show_report(report)
+
+    def _update_controls_state(self) -> None:
+        if self._safe_scan_controller.is_active():
+            state = ScanControlsState.SAFE_RUNNING
+        elif self._scan_active:
+            state = ScanControlsState.SCANNING
+        else:
+            state = ScanControlsState.IDLE
+        self._controls.set_state(state)
+
+    def _refresh_action_buttons(self) -> None:
+        controls_blocked = self._scan_active or self._safe_scan_controller.is_active()
+        advanced_allowed = not controls_blocked and self._result_grid.has_advanced_selection()
+        safety_allowed = not controls_blocked and self._result_grid.has_safety_selection()
+        self._result_grid.set_run_buttons_enabled(advanced=advanced_allowed, safety=safety_allowed)
+        clear_allowed = not self._scan_active and not self._safe_scan_controller.is_active()
+        self._controls.set_clear_enabled(clear_allowed)
+        self._update_controls_state()
+
+    def _update_mac_limited_label(self) -> None:
+        limited = sys.platform == "darwin" and not has_required_privileges({ScanMode.OS})
+        message = f"{self._t('mac_limited_title')}: {self._t('mac_limited_body')}"
+        self._summary_panel.set_mac_limited(limited, message)
+        self._result_grid.set_os_button_allowed(not limited, tooltip=message if limited else "")
+
+    def _consume_placeholder_error(self, result: HostScanResult) -> bool:
+        if not result.is_placeholder:
+            return False
+        details = "\n".join(format_error_list(result.errors, self._language))
+        if not details:
+            details = self._t("placeholder_error_detail_missing")
+        QMessageBox.critical(
+            self._window,
+            self._t("placeholder_error_title").format(target=result.target),
+            self._t("placeholder_error_body").format(details=details),
+        )
+        self._summary_has_error = True
+        self._set_summary_state("placeholder_error_status")
+        return True
+
+    def _handle_fast_result(self, result: HostScanResult) -> None:
+        if self._consume_placeholder_error(result):
+            return
+        self._result_store.add_or_update(result)
+        if self._fast_eta is not None:
+            self._register_fast_completion(result.target)
+
+    def _handle_advanced_result(self, result: HostScanResult) -> None:
+        if self._consume_placeholder_error(result):
+            return
+        self._result_store.add_or_update(result)
+        if self._advanced_eta is not None:
+            self._advanced_eta.register_completion()
+
+    def _announce_advanced_eta(self, target_count: int) -> None:
+        self._advanced_eta = self._build_advanced_eta_estimator()
+        self._advanced_eta_last_refresh = time.monotonic()
+        estimate = self._advanced_eta.estimate_before_start(target_count)
+        self._job_eta.start(
+            kind="advanced",
+            expected_seconds=estimate.estimate_sec,
+            message_builder=self._build_advanced_eta_message,
+        )
+
+    def _build_advanced_eta_message(self, remaining: float) -> str:
+        eta_text = self._format_eta_seconds(remaining)
+        return self._t("advanced_running_status_eta").format(eta=eta_text)
+
+    def _build_fast_eta_message(self, remaining: float) -> str:
+        eta_text = self._format_eta_seconds(remaining)
+        return self._t("fast_scan_running_status_eta").format(eta=eta_text)
+
+    def _build_advanced_eta_estimator(self) -> ParallelJobTimeEstimator:
+        timeout = float(self._settings.scan.advanced_timeout_seconds)
+        min_guess = max(1.0, min(timeout / 6.0, 20.0))
+        config = EstimatorConfig(window_sec=5.0)
+        return ParallelJobTimeEstimator(
+            parallelism=max(1, self._settings.scan.advanced_max_parallel),
+            min_per_task=min_guess,
+            max_per_task=timeout,
+            config=config,
+        )
+
+    def _refresh_advanced_eta_timer(self, remaining_jobs: int) -> None:
+        if self._advanced_eta is None:
+            return
+        now = time.monotonic()
+        window = None
+        if self._advanced_eta_last_refresh is not None:
+            window = max(now - self._advanced_eta_last_refresh, 0.0)
+        self._advanced_eta_last_refresh = now
+        estimate = self._advanced_eta.update_progress(remaining_jobs, window_sec=window)
+        self._job_eta.start(
+            kind="advanced",
+            expected_seconds=estimate.estimate_sec,
+            message_builder=self._build_advanced_eta_message,
+        )
+
+    def _reset_advanced_eta(self) -> None:
+        self._advanced_eta = None
+        self._advanced_eta_last_refresh = None
+
+    def _register_fast_completion(self, target: str) -> None:
+        if self._fast_eta is None:
+            return
+        spec = self._fast_task_specs.get(target)
+        if spec is None:
+            return
+        self._fast_completed_targets.add(target)
+        remaining_specs = [
+            task
+            for tid, task in self._fast_task_specs.items()
+            if tid not in self._fast_completed_targets
+        ]
+        estimate = self._fast_eta.update(
+            now_ts=time.monotonic(),
+            completed=[spec],
+            remaining=remaining_specs,
+        )
+        if estimate.estimate_sec <= 0:
+            self._job_eta.stop("fast")
+        else:
+            self._job_eta.start(
+                kind="fast",
+                expected_seconds=estimate.estimate_sec,
+                message_builder=self._build_fast_eta_message,
+            )
+        if remaining_specs:
+            self._result_grid.update_fast_progress_eta(estimate.estimate_sec)
+        else:
+            self._result_grid.complete_fast_progress()
+
+    def _stop_fast_eta(self) -> None:
+        self._fast_eta = None
+        self._fast_task_specs = {}
+        self._fast_completed_targets = set()
+        self._fast_total_work = 0.0
+        self._result_grid.reset_fast_progress()
+
+    def _build_advanced_config(self, targets: Sequence[str], *, include_os: bool) -> ScanConfig:
+        modes: set[ScanMode] = {ScanMode.PORTS}
+        if include_os:
+            modes.add(ScanMode.OS)
+        return ScanConfig(
+            targets=tuple(targets),
+            scan_modes=modes,
+            port_list=self._settings.scan.port_scan_list,
+            timeout_seconds=self._settings.scan.advanced_timeout_seconds,
+            max_parallel=self._settings.scan.advanced_max_parallel,
+            detail_label="advanced",
+        )
+
+    def _format_eta_seconds(self, seconds: float) -> str:
+        total = max(round(seconds), 0)
+        mins, secs = divmod(total, 60)
+        hours, mins = divmod(mins, 60)
+        if hours:
+            return f"{hours:d}:{mins:02d}:{secs:02d}"
+        return f"{mins:02d}:{secs:02d}"
+
+    def _on_error(self, payload) -> None:
+        message = (
+            format_error_record(payload, self._language)
+            if isinstance(payload, ErrorRecord)
+            else str(payload)
+        )
+        QMessageBox.critical(self._window, self._t("scan_error_title"), message)
+        self._window.statusBar().showMessage(message)
+        self._summary_has_error = True
+        self._set_summary_state("summary_status_error")
+        self._stop_all_eta()
+        self._result_grid.finish_progress()
+        if self._log_dialog:
+            self._log_dialog.mark_scan_finished()
+
+    def _on_finished(self) -> None:
+        completed_targets = list(self._current_scan_targets)
+        if self._active_scan_kind == "advanced" and completed_targets:
+            self._result_grid.clear_completed_advanced_selection(completed_targets)
+        if self._active_scan_kind == "advanced" and self._pending_scan_configs:
+            next_config = self._pending_scan_configs.pop(0)
+            self._current_scan_targets = list(next_config.targets)
+            self._announce_advanced_eta(len(next_config.targets))
+            self._ensure_log_dialog(next_config.targets, show=False, reset=True)
+            self._result_grid.reset_progress(len(next_config.targets))
+            self._scan_manager.start(next_config)
+            return
+        self._result_grid.finish_progress()
+        self._stop_all_eta()
+        self._clear_scan_session()
+        self._window.statusBar().showMessage(self._t("scan_finished"))
+        if not self._summary_has_error:
+            if self._result_store.has_results():
+                self._set_summary_state("summary_status_finished")
+            else:
+                self._set_summary_state("summary_status_no_hosts")
+        else:
+            self._update_summary()
+        self._refresh_action_buttons()
+        if self._log_dialog:
+            self._log_dialog.mark_scan_finished()
+
+    def _export_csv(self) -> None:
+        if not self._result_store.has_results():
+            QMessageBox.information(
+                self._window,
+                self._t("no_results_title"),
+                self._t("no_results_body"),
+            )
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self._window,
+            self._t("export_csv_dialog"),
+            "scan_results.csv",
+            self._t("export_csv_filter"),
+        )
+        if not path:
+            return
+        export_csv(path, self._result_store.export_payload(), language=self._language)
+        self._window.statusBar().showMessage(self._t("export_csv_done").format(path=path))
+
+    def _export_json(self) -> None:
+        if not self._result_store.has_results():
+            QMessageBox.information(
+                self._window,
+                self._t("no_results_title"),
+                self._t("no_results_body"),
+            )
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self._window,
+            self._t("export_json_dialog"),
+            "scan_results.json",
+            self._t("export_json_filter"),
+        )
+        if not path:
+            return
+        export_json(path, self._result_store.export_payload(), language=self._language)
+        self._window.statusBar().showMessage(self._t("export_json_done").format(path=path))
+
+    def _on_form_state_changed(self, *_args) -> None:
+        if not self._state_controller.persistence_enabled():
+            return
+        self._state_save_timer.start()
+
+    def _persist_state(self, *, on_close: bool = False) -> bool:
+        return self._state_controller.persist(
+            window=self._window,
+            controls=self._controls,
+            result_store=self._result_store,
+            result_grid=self._result_grid,
+            on_close=on_close,
+        )
+
+    def _ensure_log_dialog(self, targets: Sequence[str], *, show: bool, reset: bool = True) -> None:
+        if self._log_dialog is None:
+            self._log_dialog = ScanLogDialog(self._window, self._language)
+            self._log_dialog.destroyed.connect(self._on_log_dialog_destroyed)
+        if reset:
+            self._log_dialog.reset()
+        if targets:
+            self._log_dialog.set_initial_targets(targets)
+        if show:
+            self._log_dialog.show()
+            self._log_dialog.raise_()
+            self._log_dialog.activateWindow()
+        self._controls.set_log_enabled(True)
+
+    def _on_log_dialog_destroyed(self, _obj=None) -> None:
+        self._log_dialog = None
+        self._controls.set_log_enabled(False)
+
+    def _on_log_event(self, event: ScanLogEvent) -> None:
+        if not isinstance(event, ScanLogEvent):
+            return
+        if self._log_dialog:
+            self._log_dialog.append_event(event)
+
+    def _on_edit_config_requested(self) -> None:
+        if self._scan_active or self._safe_scan_controller.is_active():
+            QMessageBox.information(
+                self._window,
+                self._t("config_editor_blocked_title"),
+                self._t("config_editor_blocked_body"),
+            )
+            return
+        if self._config_editor is None:
+            self._config_editor = ConfigEditorDialog(
+                self._translator,
+                self._window,
+                controller=self._config_controller,
+            )
+            self._config_editor.settingsUpdated.connect(self._apply_updated_settings)
+            self._config_editor.destroyed.connect(self._on_config_editor_destroyed)
+        self._config_editor.reload_from_disk()
+        self._config_editor.show()
+        self._config_editor.raise_()
+        self._config_editor.activateWindow()
+
+    def _on_config_editor_destroyed(self, _obj=None) -> None:
+        self._config_editor = None
+
+    def _apply_updated_settings(self, settings: AppSettings) -> None:
+        self._settings = settings
+        self._scan_manager.update_settings(settings)
+        self._safe_scan_controller.update_settings(settings)
+        self._result_grid.update_priority_colors(settings.ui.priority_colors)
+        self._update_mac_limited_label()
+        self._window.statusBar().showMessage(self._t("config_editor_status_applied"))
+
+    def _t(self, key: str) -> str:
+        return self._translator(key)
