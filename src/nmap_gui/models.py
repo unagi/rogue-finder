@@ -22,6 +22,7 @@ class ScanConfig:
     targets: Sequence[str]
     scan_modes: set[ScanMode]
     port_list: tuple[int, ...] | None = None
+    all_ports: bool = False
     timeout_seconds: int | None = None
     max_parallel: int | None = None
     detail_label: str = "fast"

@@ -23,7 +23,8 @@ Rogue Finder is a cross-platform desktop utility that orchestrates lightweight N
 3. **Select scan modes** — ICMP, Ports, and OS scans are all enabled by default. Disable phases you do not need by unchecking the boxes.
 4. **Start scanning** — press **Start**. The status bar will show “Scanning…” and the progress bar tracks completed targets. Use **Stop** to cancel.
 5. **Review results** — each row displays alive state, ports, OS guess, score, priority color, and any error/action guidance. High-value hosts appear first when you sort by score or priority.
-6. **Export evidence** — press **Export CSV** or **Export JSON** to generate UTF-8 files. Exports include localized human-readable error text (`errors_text`) alongside structured fields, making sharing straightforward.
+6. **Run detail actions** — once you select result rows, you can launch **Run Advanced**, **Run Advanced + OS**, **Run All Ports**, **Run All Ports + OS**, or **Run Safety**. The all-ports actions reuse `scan.advanced_timeout_seconds` and `scan.advanced_max_parallel`, so they can take noticeably longer than the standard advanced scan.
+7. **Export evidence** — press **Export CSV** or **Export JSON** to generate UTF-8 files. Exports include localized human-readable error text (`errors_text`) alongside structured fields, making sharing straightforward.
 
 ### Best Practices
 - Keep target batches reasonable (for example, a /24 or a few dozen hosts) to avoid long-running scans or SmartScreen concerns when distributing outputs.

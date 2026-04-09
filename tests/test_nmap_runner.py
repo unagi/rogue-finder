@@ -331,6 +331,25 @@ def test_run_full_scan_marks_host_alive_when_only_ports(monkeypatch):
     assert results[0].is_alive is True
 
 
+def test_run_full_scan_uses_all_ports_flag(monkeypatch):
+    captured_args: list[list[str]] = []
+
+    def fake_run_nmap(args, **kwargs):
+        captured_args.append(list(args))
+        return PORT_XML
+
+    monkeypatch.setattr(nmap_runner, "run_nmap", fake_run_nmap)
+
+    results = nmap_runner.run_full_scan(
+        "127.0.0.1",
+        {ScanMode.PORTS},
+        scan_all_ports=True,
+    )
+
+    assert results[0].is_alive is True
+    assert captured_args == [["nmap", "-sS", "-p", "-", "127.0.0.1", "-T4"]]
+
+
 def _toggle_event(trigger_after: int):
     class ToggleEvent:
         def __init__(self):
@@ -474,6 +493,7 @@ def test_full_scan_handle_cancel_deduplicates_errors():
         log_callback=None,
         settings=nmap_runner.get_settings(),
         custom_port_list=None,
+        scan_all_ports=False,
         timeout_override=None,
         detail_label="fast",
     )

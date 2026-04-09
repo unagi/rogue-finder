@@ -65,7 +65,7 @@ Tuning `rogue-finder.config.yaml` → `rating` changes these weights at runtime,
 Rogue Finder ensures `rogue-finder.config.yaml` exists in the directory you launch from. If absent, defaults are generated and future schema updates backfill missing keys without touching overrides.
 
 Key sections:
-- `scan` – per-phase timeouts (`default_timeout_seconds`, `advanced_timeout_seconds`), fast/full port lists, high-port cutoff, worker parallelism.
+- `scan` – per-phase timeouts (`default_timeout_seconds`, `advanced_timeout_seconds`), fast/advanced port lists, high-port cutoff, worker parallelism. The GUI also exposes a dedicated all-ports action that uses the advanced timeout/parallelism settings.
 - `rating` – ICMP/port/OS weights plus combo bonuses and priority thresholds.
 - `ui` – priority row colors.
 - `safe_scan` – Safe Script concurrency, timeout, and ETA smoothing knobs.

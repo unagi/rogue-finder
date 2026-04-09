@@ -7,10 +7,12 @@ from dataclasses import dataclass
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMenu,
     QProgressBar,
     QPushButton,
     QTableWidget,
@@ -32,11 +34,25 @@ ERROR_COLUMN_INDEX = 6
 ADVANCED_COLUMN_INDEX = 7
 SAFETY_COLUMN_INDEX = 8
 DIAGNOSTICS_COLUMN_INDEX = 9
+ROW_COPY_COLUMN_INDEXES = (
+    TARGET_COLUMN_INDEX,
+    ALIVE_COLUMN_INDEX,
+    PORTS_COLUMN_INDEX,
+    OS_COLUMN_INDEX,
+    SCORE_COLUMN_INDEX,
+    PRIORITY_COLUMN_INDEX,
+    ERROR_COLUMN_INDEX,
+    DIAGNOSTICS_COLUMN_INDEX,
+)
 DEFAULT_PRIORITY_COLORS = {
     "High": QColor(255, 204, 204),
     "Medium": QColor(255, 240, 210),
     "Low": QColor(210, 235, 255),
 }
+
+
+def normalize_tsv_field(text: str) -> str:
+    return text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", " | ")
 
 
 @dataclass
@@ -60,7 +76,7 @@ class ResultGrid(QObject):
     """Encapsulates the discovery results table and selection controls."""
 
     selectionChanged = Signal()
-    runAdvancedRequested = Signal(bool)
+    runAdvancedRequested = Signal(bool, bool)
     runSafetyRequested = Signal()
     diagnosticsViewRequested = Signal(str)
 
@@ -79,8 +95,11 @@ class ResultGrid(QObject):
         self._priority_labels = priority_labels
         self._priority_color_overrides = priority_colors
         self._widget = QWidget(parent)
+        self._action_bar: QWidget | None = None
         self._run_advanced_button: QPushButton | None = None
         self._run_advanced_with_os_button: QPushButton | None = None
+        self._run_all_ports_button: QPushButton | None = None
+        self._run_all_ports_with_os_button: QPushButton | None = None
         self._run_safety_button: QPushButton | None = None
         self._advanced_selection: set[str] = set()
         self._safety_selection: set[str] = set()
@@ -102,6 +121,14 @@ class ResultGrid(QObject):
 
     def widget(self) -> QWidget:
         return self._widget
+
+    def action_bar_width_hint(self) -> int:
+        if self._action_bar is None:
+            return 0
+        return max(
+            self._action_bar.sizeHint().width(),
+            self._action_bar.minimumSizeHint().width(),
+        )
 
     def set_selections(
         self,
@@ -181,6 +208,8 @@ class ResultGrid(QObject):
         self._advanced_buttons_enabled = advanced
         if self._run_advanced_button is not None:
             self._run_advanced_button.setEnabled(advanced)
+        if self._run_all_ports_button is not None:
+            self._run_all_ports_button.setEnabled(advanced)
         self._update_os_button_state()
         if self._run_safety_button is not None:
             self._run_safety_button.setEnabled(safety)
@@ -194,6 +223,11 @@ class ResultGrid(QObject):
                 self._run_advanced_with_os_button.setToolTip(self._os_button_tooltip)
             else:
                 self._run_advanced_with_os_button.setToolTip("")
+        if self._run_all_ports_with_os_button is not None:
+            if not allowed and self._os_button_tooltip:
+                self._run_all_ports_with_os_button.setToolTip(self._os_button_tooltip)
+            else:
+                self._run_all_ports_with_os_button.setToolTip("")
         self._update_os_button_state()
 
     def update_priority_colors(self, colors: dict[str, str]) -> None:
@@ -201,10 +235,11 @@ class ResultGrid(QObject):
         self._refresh_row_styles()
 
     def _update_os_button_state(self) -> None:
-        if self._run_advanced_with_os_button is None:
-            return
         enable = self._advanced_buttons_enabled and self._os_button_allowed
-        self._run_advanced_with_os_button.setEnabled(enable)
+        if self._run_advanced_with_os_button is not None:
+            self._run_advanced_with_os_button.setEnabled(enable)
+        if self._run_all_ports_with_os_button is not None:
+            self._run_all_ports_with_os_button.setEnabled(enable)
 
     def has_rows(self) -> bool:
         return bool(self._result_index)
@@ -328,12 +363,14 @@ class ResultGrid(QObject):
         layout = QVBoxLayout(self._widget)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
-        layout.addLayout(self._create_action_bar())
+        layout.addWidget(self._create_action_bar())
         layout.addWidget(self._create_table())
         layout.addWidget(self._create_progress_bar())
 
-    def _create_action_bar(self) -> QHBoxLayout:
-        bar = QHBoxLayout()
+    def _create_action_bar(self) -> QWidget:
+        self._action_bar = QWidget(self._widget)
+        bar = QHBoxLayout(self._action_bar)
+        bar.setContentsMargins(0, 0, 0, 0)
         bar.addWidget(QLabel(self._t("advanced_select_label")))
         self._advanced_select_all_checkbox = QCheckBox(self._t("select_all"))
         self._advanced_select_all_checkbox.stateChanged.connect(
@@ -342,14 +379,28 @@ class ResultGrid(QObject):
         bar.addWidget(self._advanced_select_all_checkbox)
         self._run_advanced_button = QPushButton(self._t("run_advanced_button"))
         self._run_advanced_button.setEnabled(False)
-        self._run_advanced_button.clicked.connect(lambda: self.runAdvancedRequested.emit(False))
+        self._run_advanced_button.clicked.connect(
+            lambda: self.runAdvancedRequested.emit(False, False)
+        )
         bar.addWidget(self._run_advanced_button)
         self._run_advanced_with_os_button = QPushButton(self._t("run_advanced_with_os_button"))
         self._run_advanced_with_os_button.setEnabled(False)
         self._run_advanced_with_os_button.clicked.connect(
-            lambda: self.runAdvancedRequested.emit(True)
+            lambda: self.runAdvancedRequested.emit(True, False)
         )
         bar.addWidget(self._run_advanced_with_os_button)
+        self._run_all_ports_button = QPushButton(self._t("run_all_ports_button"))
+        self._run_all_ports_button.setEnabled(False)
+        self._run_all_ports_button.clicked.connect(
+            lambda: self.runAdvancedRequested.emit(False, True)
+        )
+        bar.addWidget(self._run_all_ports_button)
+        self._run_all_ports_with_os_button = QPushButton(self._t("run_all_ports_with_os_button"))
+        self._run_all_ports_with_os_button.setEnabled(False)
+        self._run_all_ports_with_os_button.clicked.connect(
+            lambda: self.runAdvancedRequested.emit(True, True)
+        )
+        bar.addWidget(self._run_all_ports_with_os_button)
         bar.addSpacing(20)
         bar.addWidget(QLabel(self._t("safety_select_label")))
         self._safety_select_all_checkbox = QCheckBox(self._t("select_all"))
@@ -362,7 +413,7 @@ class ResultGrid(QObject):
         self._run_safety_button.clicked.connect(lambda: self.runSafetyRequested.emit())
         bar.addWidget(self._run_safety_button)
         bar.addStretch()
-        return bar
+        return self._action_bar
 
     def _create_table(self) -> QWidget:
         self._table = QTableWidget(0, 10)
@@ -391,6 +442,8 @@ class ResultGrid(QObject):
         self._table.setSelectionBehavior(QTableWidget.SelectRows)
         self._table.setEditTriggers(QTableWidget.NoEditTriggers)
         self._table.cellClicked.connect(self._handle_cell_clicked)
+        self._table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._table.customContextMenuRequested.connect(self._show_context_menu)
         return self._table
 
     def _create_progress_bar(self) -> QWidget:
@@ -440,6 +493,25 @@ class ResultGrid(QObject):
             return
         self.diagnosticsViewRequested.emit(target)
 
+    def _show_context_menu(self, position) -> None:
+        index = self._table.indexAt(position)
+        if not index.isValid():
+            return
+
+        menu = QMenu(self._table)
+        row = index.row()
+        column = index.column()
+        item = self._table.item(index.row(), index.column())
+        if item is not None and item.text():
+            copy_cell_action = menu.addAction(self._t("table_copy_cell"))
+            copy_cell_action.triggered.connect(
+                lambda _checked=False: self._copy_cell_to_clipboard(row, column)
+            )
+
+        copy_row_action = menu.addAction(self._t("table_copy_row_tsv"))
+        copy_row_action.triggered.connect(lambda _checked=False: self._copy_row_to_clipboard(row))
+        menu.exec(self._table.viewport().mapToGlobal(position))
+
     def _toggle_all_checkboxes(self, kind: str, state: int) -> None:
         checked = Qt.CheckState(state) == Qt.CheckState.Checked
         if not self._row_checkboxes:
@@ -476,11 +548,19 @@ class ResultGrid(QObject):
         alive_text = self._t("alive_yes") if result.is_alive else self._t("alive_no")
         self._table.setItem(row, ALIVE_COLUMN_INDEX, self._make_item(alive_text, Qt.AlignCenter))
         ports_text = ", ".join(str(p) for p in result.open_ports)
-        self._table.setItem(row, PORTS_COLUMN_INDEX, self._make_item(ports_text, Qt.AlignLeft))
+        self._table.setItem(
+            row,
+            PORTS_COLUMN_INDEX,
+            self._make_item(ports_text, Qt.AlignLeft, tooltip=True),
+        )
         os_text = result.os_guess
         if result.os_accuracy is not None:
             os_text = f"{os_text} ({result.os_accuracy}%)"
-        self._table.setItem(row, OS_COLUMN_INDEX, self._make_item(os_text, Qt.AlignLeft))
+        self._table.setItem(
+            row,
+            OS_COLUMN_INDEX,
+            self._make_item(os_text, Qt.AlignLeft, tooltip=True),
+        )
         self._table.setItem(
             row,
             SCORE_COLUMN_INDEX,
@@ -490,7 +570,11 @@ class ResultGrid(QObject):
         priority_item = self._make_item(display_priority, Qt.AlignCenter)
         self._table.setItem(row, PRIORITY_COLUMN_INDEX, priority_item)
         error_text = "\n".join(format_error_list(result.errors, self._language))
-        self._table.setItem(row, ERROR_COLUMN_INDEX, self._make_item(error_text, Qt.AlignLeft))
+        self._table.setItem(
+            row,
+            ERROR_COLUMN_INDEX,
+            self._make_item(error_text, Qt.AlignLeft, tooltip=True),
+        )
         diag_label = self._diagnostics_status_label(result.diagnostics_status)
         self._table.setItem(
             row,
@@ -531,11 +615,44 @@ class ResultGrid(QObject):
         layout.addWidget(checkbox, alignment=Qt.AlignCenter)
         return widget
 
-    def _make_item(self, text: str, alignment: Qt.AlignmentFlag | None = None) -> QTableWidgetItem:
+    def _make_item(
+        self,
+        text: str,
+        alignment: Qt.AlignmentFlag | None = None,
+        *,
+        tooltip: bool = False,
+    ) -> QTableWidgetItem:
         item = QTableWidgetItem(text)
         if alignment is not None:
             item.setTextAlignment(int(alignment | Qt.AlignVCenter))
+        if tooltip and text:
+            item.setToolTip(text)
         return item
+
+    def _copy_cell_to_clipboard(self, row: int, column: int) -> None:
+        text = self._cell_text(row, column)
+        if text:
+            self._copy_text_to_clipboard(text)
+
+    def _copy_row_to_clipboard(self, row: int) -> None:
+        text = self._row_tsv_text(row)
+        if text:
+            self._copy_text_to_clipboard(text)
+
+    def _row_tsv_text(self, row: int) -> str:
+        values = [normalize_tsv_field(self._cell_text(row, column)) for column in ROW_COPY_COLUMN_INDEXES]
+        return "\t".join(values)
+
+    def _cell_text(self, row: int, column: int) -> str:
+        item = self._table.item(row, column)
+        if item is None:
+            return ""
+        return item.text()
+
+    def _copy_text_to_clipboard(self, text: str) -> None:
+        clipboard = QApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(text)
 
     def _on_row_checkbox_changed(self, kind: str, target: str, state: int) -> None:
         checked = Qt.CheckState(state) == Qt.CheckState.Checked
