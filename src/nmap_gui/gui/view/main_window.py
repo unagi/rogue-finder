@@ -23,6 +23,9 @@ else:  # pragma: no cover - runtime placeholders for type checking only
     AppSettings = object  # type: ignore[assignment]
     AppState = object  # type: ignore[assignment]
 
+DEFAULT_WINDOW_WIDTH = 1000
+DEFAULT_WINDOW_HEIGHT = 700
+
 
 # NOTE: MainWindow is instantiated directly from main.py. Keeping main.py thin and
 # starting the window early (even in PyInstaller builds) requires injecting settings/state
@@ -80,7 +83,6 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(self._t("window_title"))
         if app_icon is not None and not app_icon.isNull():
             self.setWindowIcon(app_icon)
-        self.resize(1000, 700)
 
     def _build_ui(self) -> None:
         central = QWidget()
@@ -94,7 +96,11 @@ class MainWindow(QMainWindow):
         layout.setStretch(2, 0)
         layout.setStretch(3, 0)
         self.setCentralWidget(central)
+        self._apply_initial_window_size()
         self.statusBar().showMessage(self._t("ready"))
+
+    def _apply_initial_window_size(self) -> None:
+        self.resize(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT)
 
     def _initialize_summary_panel(self) -> None:
         self._summary_panel.update_summary(
@@ -111,6 +117,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage,
             summary_callback=None,
         )
+
     def _t(self, key: str) -> str:
         return translate(key, self._language)
 

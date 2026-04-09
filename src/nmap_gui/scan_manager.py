@@ -166,6 +166,7 @@ class ScanWorker(QObject):
                     log_callback,
                     self._settings,
                     self._config.port_list,
+                    self._config.all_ports,
                     self._config.timeout_seconds,
                     self._config.detail_label,
                 )

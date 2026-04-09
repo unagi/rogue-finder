@@ -401,6 +401,28 @@ def test_submit_targets_registers_log_channels(monkeypatch):
     assert channels[future] is not None
 
 
+def test_submit_targets_forwards_all_ports_flag():
+    config = ScanConfig(
+        targets=["host"],
+        scan_modes={ScanMode.PORTS},
+        all_ports=True,
+    )
+    worker = scan_manager.ScanWorker(config)
+    worker._create_log_channel = lambda: None
+
+    class DummyExecutor:
+        def submit(self, func, *args):
+            self.called_with = args
+            return object()
+
+    executor = DummyExecutor()
+    worker._submit_targets(executor, ["host"])
+
+    assert executor.called_with[0] == "host"
+    assert executor.called_with[5] is None
+    assert executor.called_with[6] is True
+
+
 def test_submit_targets_closes_channel_on_submit_error(monkeypatch):
     config = ScanConfig(targets=["a"], scan_modes={ScanMode.ICMP})
     worker = scan_manager.ScanWorker(config)

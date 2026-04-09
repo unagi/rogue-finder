@@ -29,25 +29,28 @@ OS fingerprinting is skipped for fast discovery to keep the workflow lightweight
 
 ## Advanced Discovery
 
-Triggered by the **Run Advanced Scan** button after selecting rows in the results table.
+Triggered by the advanced-action buttons after selecting rows in the results table.
 
-- **Scan modes:** Always performs a targeted TCP port scan; optionally adds OS fingerprinting for rows that have the OS checkbox enabled.
+- **Buttons:** **Run Advanced**, **Run Advanced + OS**, **Run All Ports**, **Run All Ports + OS**.
+- **Scan modes:** Always performs a TCP port scan; the `+ OS` variants also run OS fingerprinting when privileges allow it.
 - **Targets:** Only the selected rows; OS-enabled rows are split into a separate `ScanConfig` so elevated privileges can be enforced independently.
-- **Port list:** `settings.scan.port_scan_list` (the full weighted list used by the rating engine).
+- **Port list:** **Run Advanced** uses `settings.scan.port_scan_list` (the weighted advanced list). **Run All Ports** switches the port phase to `-p -` so Nmap scans every TCP port.
 - **Timeout / parallelism:** `settings.scan.advanced_timeout_seconds` per phase (default 600 seconds), `settings.scan.advanced_max_parallel` simultaneous targets (default 4).
 
 CLI equivalents:
 
-1. TCP SYN (or TCP connect when necessary) against the full port list:  
+1. TCP SYN (or TCP connect when necessary) against the configured advanced port list:  
    `nmap -sS -p <comma-separated advanced ports> <target> -T4`
-2. Optional OS fingerprinting when the OS checkbox is enabled **and** the process has the required privileges:  
+2. TCP SYN (or TCP connect when necessary) against all TCP ports:  
+   `nmap -sS -p - <target> -T4`
+3. Optional OS fingerprinting when the OS checkbox is enabled **and** the process has the required privileges:  
    `nmap -O -Pn <target>`
    - macOS GUI builds run without root, so OS detection is skipped unless the CLI is re-launched via `sudo`.
 
 ### Relevant Settings
 
 - `scan.port_scan_list` – base set of advanced ports.
-- `scan.advanced_timeout_seconds` – timeout applied to the high-detail port and OS phases.
+- `scan.advanced_timeout_seconds` – timeout applied to the advanced/all-ports port and OS phases.
 - `scan.advanced_max_parallel` – number of simultaneous targets handed to `ProcessPoolExecutor`.
 
 ## Safe Diagnostics

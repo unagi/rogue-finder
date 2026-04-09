@@ -95,6 +95,7 @@ class MainWindowController:
         self._fast_total_work = 0.0
         self._advanced_eta: ParallelJobTimeEstimator | None = None
         self._advanced_eta_last_refresh: float | None = None
+        self._advanced_eta_message_builder: Callable[[float], str] = self._build_advanced_eta_message
         self._state_save_timer = QTimer(self._window)
         self._state_save_timer.setSingleShot(True)
         self._state_save_timer.setInterval(750)
@@ -310,7 +311,7 @@ class MainWindowController:
         self._on_form_state_changed()
         self._refresh_action_buttons()
 
-    def _on_run_advanced_clicked(self, include_os: bool = False) -> None:
+    def _on_run_advanced_clicked(self, include_os: bool = False, all_ports: bool = False) -> None:
         if self._scan_active or self._safe_scan_controller.is_active():
             QMessageBox.information(
                 self._window,
@@ -323,18 +324,21 @@ class MainWindowController:
             QMessageBox.information(
                 self._window,
                 self._t("advanced_missing_title"),
-                self._t("advanced_missing_body"),
+                self._t("all_ports_missing_body") if all_ports else self._t("advanced_missing_body"),
             )
             return
         if include_os and not has_required_privileges({ScanMode.OS}):
             show_privileged_hint(self._window, self._translator)
             return
         targets = sorted(advanced_targets)
-        config = self._build_advanced_config(targets, include_os=include_os)
+        config = self._build_advanced_config(targets, include_os=include_os, all_ports=all_ports)
         self._begin_scan_session(kind="advanced", targets=config.targets)
-        self._window.statusBar().showMessage(self._t("advanced_running_status"))
+        if all_ports:
+            self._window.statusBar().showMessage(self._t("all_ports_running_status"))
+        else:
+            self._window.statusBar().showMessage(self._t("advanced_running_status"))
         self._set_summary_state("summary_status_advanced")
-        self._announce_advanced_eta(len(config.targets))
+        self._announce_advanced_eta(len(config.targets), all_ports=all_ports)
         self._ensure_log_dialog(config.targets, show=False, reset=True)
         self._result_grid.reset_progress(len(config.targets))
         self._scan_manager.start(config)
@@ -494,19 +498,26 @@ class MainWindowController:
         if self._advanced_eta is not None:
             self._advanced_eta.register_completion()
 
-    def _announce_advanced_eta(self, target_count: int) -> None:
+    def _announce_advanced_eta(self, target_count: int, *, all_ports: bool = False) -> None:
         self._advanced_eta = self._build_advanced_eta_estimator()
         self._advanced_eta_last_refresh = time.monotonic()
+        self._advanced_eta_message_builder = (
+            self._build_all_ports_eta_message if all_ports else self._build_advanced_eta_message
+        )
         estimate = self._advanced_eta.estimate_before_start(target_count)
         self._job_eta.start(
             kind="advanced",
             expected_seconds=estimate.estimate_sec,
-            message_builder=self._build_advanced_eta_message,
+            message_builder=self._advanced_eta_message_builder,
         )
 
     def _build_advanced_eta_message(self, remaining: float) -> str:
         eta_text = self._format_eta_seconds(remaining)
         return self._t("advanced_running_status_eta").format(eta=eta_text)
+
+    def _build_all_ports_eta_message(self, remaining: float) -> str:
+        eta_text = self._format_eta_seconds(remaining)
+        return self._t("all_ports_running_status_eta").format(eta=eta_text)
 
     def _build_fast_eta_message(self, remaining: float) -> str:
         eta_text = self._format_eta_seconds(remaining)
@@ -535,12 +546,13 @@ class MainWindowController:
         self._job_eta.start(
             kind="advanced",
             expected_seconds=estimate.estimate_sec,
-            message_builder=self._build_advanced_eta_message,
+            message_builder=self._advanced_eta_message_builder,
         )
 
     def _reset_advanced_eta(self) -> None:
         self._advanced_eta = None
         self._advanced_eta_last_refresh = None
+        self._advanced_eta_message_builder = self._build_advanced_eta_message
 
     def _register_fast_completion(self, target: str) -> None:
         if self._fast_eta is None:
@@ -579,17 +591,24 @@ class MainWindowController:
         self._fast_total_work = 0.0
         self._result_grid.reset_fast_progress()
 
-    def _build_advanced_config(self, targets: Sequence[str], *, include_os: bool) -> ScanConfig:
+    def _build_advanced_config(
+        self,
+        targets: Sequence[str],
+        *,
+        include_os: bool,
+        all_ports: bool = False,
+    ) -> ScanConfig:
         modes: set[ScanMode] = {ScanMode.PORTS}
         if include_os:
             modes.add(ScanMode.OS)
         return ScanConfig(
             targets=tuple(targets),
             scan_modes=modes,
-            port_list=self._settings.scan.port_scan_list,
+            port_list=None if all_ports else self._settings.scan.port_scan_list,
+            all_ports=all_ports,
             timeout_seconds=self._settings.scan.advanced_timeout_seconds,
             max_parallel=self._settings.scan.advanced_max_parallel,
-            detail_label="advanced",
+            detail_label="all-ports" if all_ports else "advanced",
         )
 
     def _format_eta_seconds(self, seconds: float) -> str:

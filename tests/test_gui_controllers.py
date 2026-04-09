@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -18,6 +19,7 @@ from nmap_gui.gui.controller import (
 from nmap_gui.gui.controller import (
     state_controller as state_controller_mod,
 )
+from nmap_gui.gui.view import result_grid as result_grid_view
 from nmap_gui.infrastructure.state import AppState, StorageWarning
 from nmap_gui.models import ErrorRecord, HostScanResult, SafeScanReport, ScanMode
 
@@ -37,6 +39,27 @@ def _make_result(target: str, alive: bool = True) -> HostScanResult:
         detail_level="fast",
         detail_updated_at="now",
     )
+
+
+def _ensure_qapplication():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication([])
+    return app
+
+
+def _translate_grid(key: str) -> str:
+    translations = {
+        "alive_yes": "Yes",
+        "alive_no": "No",
+        "diagnostics_status/completed": "Completed",
+        "diagnostics_status/not_started": "Not started",
+        "error_action_label": "Action",
+    }
+    return translations.get(key, key)
 
 
 # ---------- privileges tests ----------
@@ -206,6 +229,93 @@ def test_result_store_restore_and_summary():
     store.update_summary(target_count=4, requested_hosts=10, status="running")
     assert summary.calls[-1]["alive_hosts"] == 1
     assert summary.calls[-1]["discovered_hosts"] == len(store.results())
+
+
+def test_result_grid_sets_full_text_tooltips():
+    _ensure_qapplication()
+    grid = result_grid_view.ResultGrid(
+        translator=_translate_grid,
+        language="en",
+        priority_labels={"High": "High", "Medium": "Medium", "Low": "Low"},
+        priority_colors={},
+    )
+    result = HostScanResult(
+        target="alpha",
+        is_alive=True,
+        open_ports=[22, 80, 443, 3389],
+        os_guess="Windows 11 Pro",
+        os_accuracy=98,
+        score=10,
+        priority="High",
+        diagnostics_status="completed",
+        errors=[
+            ErrorRecord(code="E1", message_key="message.one", action_key="action.one"),
+            ErrorRecord(code="E2", message_key="message.two", action_key="action.two"),
+        ],
+    )
+
+    grid.update_result(result)
+
+    ports_item = grid._table.item(0, result_grid_view.PORTS_COLUMN_INDEX)
+    os_item = grid._table.item(0, result_grid_view.OS_COLUMN_INDEX)
+    error_item = grid._table.item(0, result_grid_view.ERROR_COLUMN_INDEX)
+
+    assert ports_item.toolTip() == "22, 80, 443, 3389"
+    assert os_item.toolTip() == "Windows 11 Pro (98%)"
+    assert error_item.toolTip() == (
+        "[E1] message.one (Action: action.one)\n[E2] message.two (Action: action.two)"
+    )
+
+
+def test_result_grid_copies_cell_and_row_tsv_to_clipboard(monkeypatch):
+    _ensure_qapplication()
+    grid = result_grid_view.ResultGrid(
+        translator=_translate_grid,
+        language="en",
+        priority_labels={"High": "High", "Medium": "Medium", "Low": "Low"},
+        priority_colors={},
+    )
+    result = HostScanResult(
+        target="bravo",
+        is_alive=True,
+        open_ports=[21, 22, 80],
+        os_guess="Linux",
+        os_accuracy=87,
+        score=7,
+        priority="Medium",
+        diagnostics_status="completed",
+        errors=[
+            ErrorRecord(code="E1", message_key="message.one", action_key="action.one"),
+            ErrorRecord(code="E2", message_key="message.two", action_key="action.two"),
+        ],
+    )
+    grid.update_result(result)
+
+    class FakeClipboard:
+        def __init__(self):
+            self.text = ""
+
+        def setText(self, text: str) -> None:
+            self.text = text
+
+    clipboard = FakeClipboard()
+
+    class FakeApplication:
+        @staticmethod
+        def clipboard():
+            return clipboard
+
+    monkeypatch.setattr(result_grid_view, "QApplication", FakeApplication)
+
+    grid._copy_cell_to_clipboard(0, result_grid_view.PORTS_COLUMN_INDEX)
+    assert clipboard.text == "21, 22, 80"
+
+    grid._copy_row_to_clipboard(0)
+    assert clipboard.text == (
+        "bravo\tYes\t21, 22, 80\tLinux (87%)\t7\tMedium\t"
+        "[E1] message.one (Action: action.one) | [E2] message.two (Action: action.two)\t"
+        "Completed"
+    )
 
 
 # ---------- StateController tests ----------

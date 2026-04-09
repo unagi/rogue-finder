@@ -6,6 +6,7 @@ import sys
 import types
 
 from nmap_gui import main as entry
+from nmap_gui.gui.view import main_window as main_window_view
 
 
 def _stub_app_icon(monkeypatch, icon):
@@ -116,3 +117,21 @@ def test_main_runs_success_path(monkeypatch):
     assert result == expected_exit_code
     assert events["window_shown"] is True
     assert events["window_icon"] is icon
+
+
+def test_apply_initial_window_size_uses_default_constants():
+    class DummyWindow:
+        def __init__(self):
+            self.resized_to = None
+
+        def resize(self, width, height):
+            self.resized_to = (width, height)
+
+    window = DummyWindow()
+
+    main_window_view.MainWindow._apply_initial_window_size(window)
+
+    assert window.resized_to == (
+        main_window_view.DEFAULT_WINDOW_WIDTH,
+        main_window_view.DEFAULT_WINDOW_HEIGHT,
+    )

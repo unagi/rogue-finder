@@ -221,6 +221,7 @@ def run_full_scan(
     log_callback: Callable[[ScanLogEvent], None] | None = None,
     settings: AppSettings | None = None,
     custom_port_list: Sequence[int] | None = None,
+    scan_all_ports: bool = False,
     timeout_override: int | None = None,
     detail_label: str = "fast",
 ) -> list[HostScanResult]:
@@ -231,6 +232,7 @@ def run_full_scan(
         log_callback=log_callback,
         settings=settings,
         custom_port_list=custom_port_list,
+        scan_all_ports=scan_all_ports,
         timeout_override=timeout_override,
         detail_label=detail_label,
     )
@@ -247,6 +249,7 @@ class _FullScanRunner:
         log_callback: Callable[[ScanLogEvent], None] | None,
         settings: AppSettings | None,
         custom_port_list: Sequence[int] | None,
+        scan_all_ports: bool,
         timeout_override: int | None,
         detail_label: str,
     ) -> None:
@@ -258,6 +261,7 @@ class _FullScanRunner:
         self.scan_settings = self.app_settings.scan
         self.rating_settings = self.app_settings.rating
         self.custom_port_list = custom_port_list
+        self.scan_all_ports = scan_all_ports
         self.phase_timeout = timeout_override or self.scan_settings.default_timeout_seconds
         self.detail_label = detail_label
         self.detail_timestamp = datetime.now(UTC).isoformat()
@@ -312,10 +316,8 @@ class _FullScanRunner:
     def _run_port_phase(self, has_icmp_alive: bool) -> None:
         if not self._should_scan_ports(has_icmp_alive):
             return
-        selected_ports = self.custom_port_list or self.scan_settings.port_scan_list
-        port_list = ",".join(str(p) for p in selected_ports)
-        port_args = self._port_scan_args(port_list)
-        xml_text = self._execute_port_scan(port_args, port_list)
+        port_args, port_spec = self._build_port_scan_args()
+        xml_text = self._execute_port_scan(port_args, port_spec)
         try:
             port_map = parse_open_ports_by_host(xml_text, self.target)
         except ET.ParseError as exc:
@@ -330,6 +332,13 @@ class _FullScanRunner:
         return ScanMode.PORTS in self.scan_modes and (
             has_icmp_alive or ScanMode.ICMP not in self.scan_modes
         )
+
+    def _build_port_scan_args(self) -> tuple[list[str], str]:
+        if self.scan_all_ports:
+            return self._port_scan_args("-"), "-"
+        selected_ports = self.custom_port_list or self.scan_settings.port_scan_list
+        port_spec = ",".join(str(p) for p in selected_ports)
+        return self._port_scan_args(port_spec), port_spec
 
     def _port_scan_args(self, port_list: str) -> list[str]:
         args = ["nmap", "-sS", "-p", port_list, self.target, "-T4"]
